@@ -8,7 +8,7 @@ This repository contains the code and documentation for building an Urdu Byte-Pa
 
 ---
 
-## Current Status: Phase 1 (Corpus Collection & Cleaning) — Complete
+## Current Status: Phase 1 Complete; Part B Implementation In Progress
 
 Phase 1 deliverables have been built and verified:
 - **Corpus Volume**: 1.95 GB total cleaned Urdu text (~240 million words), exceeding the 500 MB minimum.
@@ -42,6 +42,11 @@ llm_assignment/
 │   ├── clean_corpus.py                                     # Cleaning, deduplication, and splitting pipeline
 │   └── verify_raw_data.py                                  # Raw dataset sanity and encoding checker
 ├── normalize.py                                            # Standalone Urdu Unicode normalizer
+├── BPE_urdu/
+│   ├── bpe.py                                              # Urdu-aware byte-level BPE tokenizer
+│   ├── test_bpe.py                                         # Tokenizer and merge-equivalence tests
+│   ├── train_tokenizer.py                                  # Train and save tokenizer.json
+│   └── encode_corpus.py                                    # Export train.bin / val.bin as uint16
 ├── requirements.txt                                        # Python dependencies
 ├── .gitignore                                              # Git ignore rules for datasets & cache
 └── README.md                                               # Project overview and instructions
@@ -87,6 +92,48 @@ python scripts/clean_corpus.py
 
 This updates `DATA_CARD.md` with exact byte reductions and document totals.
 
+### 5. Implement Part B (Urdu byte-level BPE)
+
+Run these commands from the `BPE_urdu` directory in PowerShell. The first
+command runs the sanity and equivalence checks on the same 1 MB sample, then
+automatically writes its report to `outputs\test_bpe_py_results.txt`. Run a
+smaller measurement trial before committing to full-corpus training. Generated
+Part B text reports and the tokenizer JSON are kept in `outputs\`; final
+encoded arrays go in `bin_outputs\`.
+
+```powershell
+python bpe.py
+python test_bpe.py --train ..\data\processed\train.txt --ref-merges 2000
+python train_tokenizer.py --train ..\data\processed\train.txt --out outputs\tok_trial.json --log outputs\train_tokenizer_trial_log.txt --max-bytes 50000000 --vocab-size 20000
+```
+
+Running `bpe.py` directly performs a small built-in test and saves
+`outputs\bpe_py_test_results.txt`; it does not train on the corpus.
+`test_bpe.py` saves `outputs\test_bpe_py_results.txt`.
+
+After the trial, train the required 50,000-token vocabulary and encode the
+training and validation splits. The tokenizer trainer writes
+`outputs\train_tokenizer_log.txt`; the encoder automatically writes
+`outputs\encode_corpus_train_log.txt` and
+`outputs\encode_corpus_val_log.txt`. Without explicit output arguments,
+training saves `outputs\tokenizer.json`; encoding saves `bin_outputs\train.bin`
+and `bin_outputs\val.bin`.
+
+```powershell
+python train_tokenizer.py
+python encode_corpus.py --tok outputs\tokenizer.json --inp ..\data\processed\train.txt
+python encode_corpus.py --tok outputs\tokenizer.json --inp ..\data\processed\val.txt
+```
+
+With no arguments, `train_tokenizer.py` uses the project
+`data\processed\train.txt`, writes the tokenizer to `outputs\tokenizer.json`,
+and writes its log to `outputs\train_tokenizer_log.txt`. Pass `--train` to
+select a different training file.
+
+Training uses `train.txt` only. Keep `--min-freq 1` to use all pre-tokens;
+raising it changes the training distribution and must be disclosed in the report.
+The tokenizer preserves text exactly and treats `<|endoftext|>` as reserved ID 256.
+
 ---
 
 ## Dataset Access
@@ -96,9 +143,10 @@ Due to size constraints (~1.95 GB), the raw and processed text files are hosted 
 
 ---
 
-## Next Steps
+## Remaining Part B Work
 
-- **Phase 2**: Pre-tokenization regular expression design for Urdu words, diacritics, and ZWNJ.
-- **Phase 3**: Byte-level BPE tokenizer implementation from scratch (Reference and Fast versions) trained to 50,000 vocabulary tokens.
-- **Phase 4**: Corpus encoding to binary flat arrays (`train.bin`, `val.bin`).
-- **Phase 5**: Analysis, compression benchmarking vs. GPT-2/o200k_base, and final report.
+- Run the fast/reference merge-equivalence check on the real 1 MB sample and record its tested merge count.
+- Measure a representative trial for time and memory before full-corpus training.
+- Train the 50,000-token vocabulary; confirm all 49,743 merges were learned.
+- Encode `train.txt` and `val.txt`; retain the logs and report the binary token counts.
+- Complete the required Part C analysis and final report.

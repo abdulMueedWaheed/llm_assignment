@@ -5,6 +5,8 @@ __pycache__/
 
 # Large dataset files and binary arrays (stored externally via shared drive link)
 data/
+data/processed/
+data/processed/*.txt
 processed/
 raw/
 *.bin
@@ -20,6 +22,14 @@ val.txt
 test.txt
 train.bin
 val.bin
+
+# BPE and model training outputs
+BPE_urdu/outputs/
+BPE_urdu/out/
+outputs/
+out/
+*.partial
+*.tmp
 
 # Python environments
 venv/
@@ -41,3 +51,4 @@ scratch/
 
 # docs
 docs/*
+taskB_md_files/
