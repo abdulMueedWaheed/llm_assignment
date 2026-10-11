@@ -1,1 +1,43 @@
-data
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Large dataset files and binary arrays (stored externally via shared drive link)
+data/
+processed/
+raw/
+*.bin
+*.parquet
+*.txt.xz
+*.tar.gz
+*.zip
+*.7z
+
+# Ignore generated huge corpus files if placed locally
+train.txt
+val.txt
+test.txt
+train.bin
+val.bin
+
+# Python environments
+venv/
+.venv/
+env/
+ENV/
+
+# IDE and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs and scratch
+*.log
+scratch/
+
+# docs
+docs/*
