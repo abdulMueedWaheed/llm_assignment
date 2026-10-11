@@ -156,8 +156,8 @@ def main() -> int:
     script_folder = Path(__file__).resolve().parent
     project_folder = script_folder.parent
     default_train = project_folder / "data" / "processed" / "train.txt"
-    default_output = script_folder / "outputs" / "tokenizer.json"
-    default_log = script_folder / "outputs" / "train_tokenizer_log.txt"
+    default_output = project_folder / "models" / "tokenizer.json"
+    default_log = project_folder / "logs" / "train_tokenizer.log"
 
     parser = argparse.ArgumentParser(
         description="Train the beginner-friendly Urdu BPE tokenizer."

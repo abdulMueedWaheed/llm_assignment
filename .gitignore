@@ -3,12 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Large dataset files and binary arrays (stored externally via shared drive link)
-data/
-data/processed/
-data/processed/*.txt
-processed/
-raw/
+# Large corpus and encoded arrays are stored externally via shared-drive links.
+/data/raw/
+/data/processed/*.txt
+/data/encoded/*.bin
 *.bin
 *.parquet
 *.txt.xz
@@ -23,11 +21,10 @@ test.txt
 train.bin
 val.bin
 
-# BPE and model training outputs
-BPE_urdu/outputs/
-BPE_urdu/out/
-outputs/
-out/
+# Local model, runtime logs, and archives are reproducible outputs.
+/models/tokenizer.json
+/logs/
+/submission.zip
 *.partial
 *.tmp
 
@@ -48,7 +45,3 @@ Thumbs.db
 # Logs and scratch
 *.log
 scratch/
-
-# docs
-docs/*
-taskB_md_files/

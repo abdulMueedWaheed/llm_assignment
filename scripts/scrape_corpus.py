@@ -14,10 +14,11 @@ from datetime import datetime
 
 TARGET_DIR = Path(__file__).resolve().parent.parent / "data" / "raw" / "scraped"
 OUTPUT_FILE = TARGET_DIR / "humsub_raw.txt"
-LOG_FILE = TARGET_DIR / "scrape_log.json"
+LOG_FILE = Path(__file__).resolve().parent.parent / "logs" / "scrape_log.json"
 TARGET_BYTES = 52 * 1024 * 1024  # Target ~52 MB to comfortably exceed 50 MB threshold
 
 TARGET_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 API_URL = "https://www.humsub.com.pk/wp-json/wp/v2/posts"
 HEADERS = {

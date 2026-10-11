@@ -1,168 +1,105 @@
-# Urdu BPE Tokenizer from Scratch
+# CS 417 Urdu BPE Tokenizer
 
-**Course**: CS 417: Large Language Model (Spring 2026)  
-**Institution**: School of Electrical Engineering and Computer Science (SEECS), NUST  
-**Assignment**: Assignment 1 — Build an Urdu BPE Tokenizer from Scratch  
+Assignment 1 implementation and deliverables for a byte-level Urdu BPE tokenizer.
 
-This repository contains the code and documentation for building an Urdu Byte-Pair Encoding (BPE) tokenizer from the ground up, starting with corpus collection and Unicode normalization, followed by a custom BPE training implementation with a 50,000 token vocabulary.
+## Status
 
----
+- The 50,000-entry tokenizer is trained with all 49,743 merges.
+- Recorded full training took 337.1s to count and 173.7s to learn merges (510.8s total), using 2,332 MiB peak memory on the logged Linux host (Python 3.14.8, 12 cores).
+- The real 1 MiB reference/fast check matched all 2,000 merges (266.0s reference, 1.0s fast); round-trip passed.
+- `data/encoded/train.bin` and `data/encoded/val.bin` are flat `uint16` arrays.
+- The final Part C report is `reports/report.pdf` (3 pages).
+- The single corpus card is `DATA_CARD.md`.
+- Large corpus and binary files are kept outside the source archive for shared-drive hosting.
 
-## Current Status: Phase 1 Complete; Part B Verified; Part C In Progress
-
-Phase 1 deliverables have been built and verified:
-- **Corpus Volume**: 1.95 GB total cleaned Urdu text (~240 million words), exceeding the 500 MB minimum.
-- **Source Diversity**: 3 sources across 3 distinct genres:
-  1. **HumSub** (51.9 MB raw / 51.8 MB clean) — *Literature & Blogs* (collected via WordPress REST API with 5,279 articles logged as evidence).
-  2. **Urdu Wikipedia** (359.6 MB raw / 351.3 MB clean) — *Encyclopedia* (extracted from Wikimedia dumps).
-  3. **CC-100 Slice** (1,534.9 MB raw / 1,524.1 MB clean) — *Web Crawl* (Common Crawl).
-- **Custom Normalizer (`normalize.py`)**: Handles Urdu keyboard inconsistencies (Arabic Yeh/Kaf/Heh mapping, Tatweel removal, ASCII digit standardization, and ZWNJ preservation).
-- **Pipeline (`clean_corpus.py`)**: Strips markup, filters non-Urdu text (>=60% Urdu script threshold), deduplicates documents using SHA-256, and splits the data.
-- **Splits**: Document-level split with `random.seed(42)` and `<|endoftext|>` delimiters:
-  - `train.txt`: 98% (1,912.47 MB, 721,491 documents)
-  - `val.txt`: 1% (19.49 MB, 7,362 documents)
-  - `test.txt`: 1% (19.26 MB, 7,363 documents)
-- **Data Card**: Full metrics and breakdown documented in [`DATA_CARD.md`](DATA_CARD.md).
-
----
-
-## Repository Structure
+## Layout
 
 ```text
-llm_assignment/
-├── docs/
-│   ├── Assignment 1 - Urdu BPE Tokenizer from Scratch.pdf  # Course assignment brief
-│   └── EXECUTION_PLAN.md                                    # End-to-end implementation plan
-├── reports/
-│   ├── DATA_CARD.md                                        # Official 1-page data card
-│   ├── raw_data_verify.txt                                 # Raw data verification log
-│   └── scrape_log.json                                     # Custom scraping evidence log
-├── scripts/
-│   ├── scrape_corpus.py                                    # Scraper for HumSub REST API (>= 50 MB)
-│   ├── clean_corpus.py                                     # Cleaning, deduplication, and splitting pipeline
-│   └── verify_raw_data.py                                  # Raw dataset sanity and encoding checker
-├── normalize.py                                            # Standalone Urdu Unicode normalizer
-├── BPE_urdu/
-│   ├── bpe.py                                              # Urdu-aware byte-level BPE tokenizer
-│   ├── test_bpe.py                                         # Tokenizer and merge-equivalence tests
-│   ├── train_tokenizer.py                                  # Train and save tokenizer.json
-│   ├── encode_corpus.py                                    # Export train.bin / val.bin as uint16
-│   └── analyze_tokenizer.py                                # Part C tokenizer analysis
-├── requirements.txt                                        # Python dependencies
-├── .gitignore                                              # Git ignore rules for datasets & cache
-└── README.md                                               # Project overview and instructions
+src/
+  normalize.py          Unicode normalization
+  bpe.py                public BPETokenizer API and smoke test
+  bpe_tokenizer.py      corpus handling, encode/decode, and serialization
+  bpe_training.py       reference and heap-optimized BPE training
+  bpe_tokens.py         token IDs, Urdu regex, byte merge, heap ordering
+  train_tokenizer.py    required training entry point
+  encode_corpus.py      required uint16 encoder entry point
+scripts/
+  scrape_corpus.py      custom HumSub collection
+  clean_corpus.py       cleaning, deduplication, and document splits
+  verify_raw_data.py   source file verification
+  download_data.py      prepared corpus downloader
+  test_bpe.py           tokenizer tests and real-sample comparison
+  analyze_tokenizer.py  Part C analysis CLI
+  analysis_merges.py    merge, UTF-8, and token-length analysis
+  analysis_metrics.py   tokens-per-word comparison and test inputs
+  output_utils.py       shared CLI output formatting
+data/
+  raw/                  locally collected/source material; not archived
+  processed/            train.txt, val.txt, test.txt; shared-drive deliverables
+  encoded/               train.bin, val.bin; shared-drive deliverables
+models/
+  tokenizer.json        trained model with 49,743 ordered merges
+logs/                    training, encoding, and test logs
+analysis/                generated Part C Markdown
+reports/
+  report.pdf             final report, at most four pages
+docs/
+  ARCHITECTURE.md        code and data flow
+  ASSIGNMENT_CHECKLIST.md requirements audit and remaining actions
+DATA_CARD.md             single corpus data card
+README.md                this guide
 ```
 
----
+## Setup and Checks
 
-## Setup & Reproduction
-
-### 1. Requirements
-
-Install dependencies using Python 3.10+:
+Run from the repository root:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+python src/normalize.py
+python scripts/test_bpe.py
+python scripts/test_bpe.py --train data/processed/train.txt --ref-merges 2000
 ```
 
-### 2. Verify Normalization
+## Rebuild the Tokenizer
 
-Run the built-in self-tests in `normalize.py`:
+Exact full-corpus training command; it reads `train.txt` and writes the model and log separately:
 
 ```bash
-python normalize.py
+python src/train_tokenizer.py --train data/processed/train.txt --out models/tokenizer.json --log logs/train_tokenizer.log --vocab-size 50000 --mode fast --min-freq 1 --checkpoint-every 5000
 ```
 
-### 3. Collect Custom Data (HumSub API)
+Encode the required splits:
 
-To reproduce the custom collection of >= 50 MB raw Urdu articles:
+```bash
+python src/encode_corpus.py --tok models/tokenizer.json
+```
+
+Rebuild Part C analysis:
+
+```bash
+python scripts/analyze_tokenizer.py --tokenizer models/tokenizer.json --train data/processed/train.txt --test data/processed/test.txt --output analysis/phase3_analysis.md
+```
+
+The analyzer uses `tiktoken` only for the allowed GPT-2 and `o200k_base` comparison.
+
+## Corpus Commands
 
 ```bash
 python scripts/scrape_corpus.py
-```
-
-This writes raw text to `data/raw/scraped/humsub_raw.txt` and an audit trail to `reports/scrape_log.json`.
-
-### 4. Run the Cleaning Pipeline
-
-To clean the raw sources, apply normalization, deduplicate, and generate the final `train.txt`, `val.txt`, and `test.txt` splits:
-
-```bash
 python scripts/clean_corpus.py
+python scripts/verify_raw_data.py
+python scripts/download_data.py
 ```
 
-This updates `DATA_CARD.md` with exact byte reductions and document totals.
+The cleaner expects source files under `data/raw/` and writes the document-level splits under `data/processed/`. It updates only the root `DATA_CARD.md`.
 
-### 5. Implement Part B (Urdu byte-level BPE)
+## Submission
 
-Run these commands from the `BPE_urdu` directory in a Linux shell. The first
-command runs the sanity and equivalence checks on the same 1 MB sample, then
-automatically writes its report to `outputs/test_bpe_results.txt`. Run a
-smaller measurement trial before committing to full-corpus training. Generated
-Part B text reports and the tokenizer JSON are kept in `outputs/`; final
-encoded arrays go in `bin_outputs/`.
+Archive the source (`src/`, `scripts/`, `docs/`), `models/tokenizer.json`, `DATA_CARD.md`, `README.md`, and `reports/report.pdf`. Provide a shared-drive link for:
 
-```bash
-cd BPE_urdu
-python bpe.py
-python test_bpe.py --train ../data/processed/train.txt --ref-merges 2000
-python train_tokenizer.py --train ../data/processed/train.txt --out outputs/tok_trial.json --log outputs/train_tokenizer_trial_log.txt --max-bytes 50000000 --vocab-size 20000
-```
-
-Running `bpe.py` directly performs a small built-in test and saves
-`outputs/bpe_test.txt`; it does not train on the corpus.
-`test_bpe.py` saves `outputs/test_bpe_results.txt`.
-
-After the trial, train the required 50,000-token vocabulary and encode the
-training and validation splits. The tokenizer trainer writes
-`outputs/train_tokenizer_log.txt`; the encoder automatically writes
-`outputs/encode_corpus_train_log.txt` and
-`outputs/encode_corpus_val_log.txt`. Without explicit output arguments,
-training saves `outputs/tokenizer.json`; encoding saves `bin_outputs/train.bin`
-and `bin_outputs/val.bin`.
-
-```bash
-python train_tokenizer.py
-python encode_corpus.py
-```
-
-Run the Phase 3 analysis after training the final 50,000-token tokenizer:
-
-```bash
-python analyze_tokenizer.py
-```
-
-The available tokenizer is currently a 20,000-token trial. To reproduce the
-preliminary analysis on it, run:
-
-```bash
-python analyze_tokenizer.py --tokenizer outputs/tok_trial.json --output ../reports/phase3_trial_analysis.md
-```
-
-With no arguments, `train_tokenizer.py` uses the project
-`data/processed/train.txt`, writes the tokenizer to `outputs/tokenizer.json`,
-and writes its log to `outputs/train_tokenizer_log.txt`. Pass `--train` to
-select a different training file. With no arguments, `encode_corpus.py` loads
-that tokenizer, encodes both `train.txt` and `val.txt`, and writes
-`bin_outputs/train.bin` and `bin_outputs/val.bin` plus a separate report for
-each split in `outputs/`. Each encoding report records the local start time,
-finish time, and elapsed duration. Use `--inp` to encode only one input file.
-
-Training uses `train.txt` only. Keep `--min-freq 1` to use all pre-tokens;
-raising it changes the training distribution and must be disclosed in the report.
-The tokenizer preserves text exactly and treats `<|endoftext|>` as reserved ID 256.
-
----
-
-## Dataset Access
-
-Due to size constraints (~1.95 GB), the raw and processed text files are hosted externally on Google Drive:
-- **Processed Splits (`train.txt`, `val.txt`, `test.txt`)**: Available via shared project drive (`LLM-Project/data/processed/`).
-
----
-
-## Remaining Work
-
-- Train the 50,000-token vocabulary; confirm all 49,743 merges were learned.
-- Encode `train.txt` and `val.txt`; retain the logs and report the binary token counts.
-- Replace the preliminary Phase 3 analysis with results from the final 50,000-token tokenizer and produce the four-page PDF report.
+- `data/processed/train.txt`
+- `data/processed/val.txt`
+- `data/processed/test.txt`
+- `data/encoded/train.bin`
+- `data/encoded/val.bin`

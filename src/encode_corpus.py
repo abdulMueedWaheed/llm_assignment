@@ -221,7 +221,7 @@ def encode_with_report(
 def main() -> int:
     script_folder = Path(__file__).resolve().parent
     project_folder = script_folder.parent
-    default_tokenizer = script_folder / "outputs" / "tokenizer.json"
+    default_tokenizer = project_folder / "models" / "tokenizer.json"
     default_inputs = [
         project_folder / "data" / "processed" / "train.txt",
         project_folder / "data" / "processed" / "val.txt",
@@ -260,14 +260,14 @@ def main() -> int:
         output_path = (
             Path(args.out)
             if args.out
-            else script_folder / "bin_outputs" / f"{input_path.stem}.bin"
+            else project_folder / "data" / "encoded" / f"{input_path.stem}.bin"
         )
         report_path = (
             Path(args.log)
             if args.log
-            else script_folder
-            / "outputs"
-            / f"encode_corpus_{input_path.stem}_log.txt"
+            else project_folder
+            / "logs"
+            / f"encode_corpus_{input_path.stem}.log"
         )
         encode_with_report(
             Path(args.tok),

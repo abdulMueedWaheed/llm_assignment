@@ -9,6 +9,9 @@ from pathlib import Path
 
 import regex
 
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_DIR / "src"))
+
 from bpe import (
     FIRST_MERGE_ID,
     SPECIAL_ID,
@@ -310,7 +313,7 @@ def main() -> None:
     parser.add_argument("--ref-merges", default="2000")
     parser.add_argument(
         "--report",
-        default=str(script_folder / "outputs" / "test_bpe_results.txt"),
+        default=str(script_folder.parent / "logs" / "test_bpe.log"),
     )
     args = parser.parse_args()
     run_tests(args, Path(args.report))

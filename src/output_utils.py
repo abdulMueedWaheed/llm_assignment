@@ -34,6 +34,18 @@ def show_value(name: str, value: object) -> None:
     print(f"{name:<24}: {value}", flush=True)
 
 
+def print_header(title: str) -> None:
+    show_title(title)
+
+
+def print_section(title: str) -> None:
+    show_section(title)
+
+
+def print_field(name: str, value: object) -> None:
+    show_value(name, value)
+
+
 def clock_time() -> str:
     return datetime.now().astimezone().isoformat(sep=" ", timespec="seconds")
 

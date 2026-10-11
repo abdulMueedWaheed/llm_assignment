@@ -15,7 +15,7 @@ SOURCES = {
     "CC-100 (Web Crawl)": DATA_DIR / "cc100" / "ur.txt",
 }
 
-LOG_FILE = DATA_DIR / "scraped" / "scrape_log.json"
+LOG_FILE = Path(__file__).resolve().parent.parent / "logs" / "scrape_log.json"
 
 print("=" * 70)
 print("            RAW DATASET VERIFICATION REPORT")

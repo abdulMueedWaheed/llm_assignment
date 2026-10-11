@@ -3,14 +3,19 @@ import os
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
 from output_utils import print_field, print_header, print_section
 
-try:
-    import gdown
-except ImportError:
-    print("Error: 'gdown' package is missing.")
-    print("Install it with: pip install gdown")
-    sys.exit(1)
+
+def load_gdown():
+    try:
+        import gdown
+    except ImportError:
+        print("Error: 'gdown' package is missing.")
+        print("Install it with: python -m pip install gdown")
+        raise SystemExit(1)
+    return gdown
 
 
 # Shared Google Drive URL containing the project datasets
@@ -29,6 +34,7 @@ def scan_remote_drive_folder(
     folder_url: str,
     target_subfolder: str = "processed",
 ) -> list[dict]:
+    gdown = load_gdown()
     """
     Queries Google Drive directly to list all files in the shared folder.
     Filters files in the target subfolder (for example, 'processed').
@@ -77,6 +83,7 @@ def download_remote_file(file_info: dict, dest_dir: Path, force: bool = False) -
     Skips download if file already exists with non-zero size (unless force=True).
     """
     file_name = file_info["name"]
+    gdown = load_gdown()
     file_id = file_info["id"]
     target_path = dest_dir / file_name
 

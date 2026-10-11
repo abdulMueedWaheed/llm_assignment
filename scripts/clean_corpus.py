@@ -15,10 +15,11 @@ from datetime import datetime
 from pathlib import Path
 
 # Import local normalizer
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_DIR / "src"))
 from normalize import normalize
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = PROJECT_DIR / "data"
 HUMSUB_PATH = DATA_DIR / "raw" / "scraped" / "humsub_raw.txt"
 WIKI_PATH = DATA_DIR / "raw" / "wikipedia" / "wikipedia_raw.txt"
 CC100_PATH = DATA_DIR / "raw" / "cc100" / "ur.txt"
@@ -220,7 +221,7 @@ def save_data_card(stats, split_sizes, raw_mb, strip_mb, norm_mb, filt_mb, clean
 | **CC-100 (Urdu)** | Web Crawl | Common Crawl (`cc100/ur.txt.xz`) | Common Crawl Terms | October 2026 | {cc100_raw_mb:.2f} MB | {cc100_clean_mb:.2f} MB |
 | **Total** | **3 Sources, 3 Genres** | — | — | — | **{raw_mb:.2f} MB** | **{clean_mb:.2f} MB** |
 
-*Evidence for Custom Collection*: `data/raw/scraped/scrape_log.json` logs {stats['sources']['humsub']['docs']:,} articles with article IDs, URLs, byte sizes, and timestamps.
+*Evidence for Custom Collection*: `logs/scrape_log.json` logs {stats['sources']['humsub']['docs']:,} articles with article IDs, URLs, byte sizes, and timestamps.
 
 ---
 
@@ -256,15 +257,10 @@ def save_data_card(stats, split_sizes, raw_mb, strip_mb, norm_mb, filt_mb, clean
 2. **Orthographic Standardization**: Prevalent Arabic keyboard artifacts (`ي`, `ك`, `ه`) have been normalized to Urdu Unicode graphemes (`ی`, `ک`, `ہ`), preserving vocabulary compactness.
 3. **Diacritics & Code-Mixing**: Rare diacritics (اعراب) have been retained to allow phonetic and poetic learning. Natural English code-mixing within Urdu sentences is preserved, while English-dominated spam was removed.
 """
-    # Write to reports/DATA_CARD.md and root DATA_CARD.md
-    for out_path in [
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "reports", "DATA_CARD.md")),
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "DATA_CARD.md"))
-    ]:
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(card)
-        print(f"Updated: {out_path}")
+    out_path = PROJECT_DIR / "DATA_CARD.md"
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(card)
+    print(f"Updated: {out_path}")
 
 if __name__ == "__main__":
     main()
