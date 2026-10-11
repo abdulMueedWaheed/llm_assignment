@@ -57,9 +57,16 @@ if os.path.exists(LOG_FILE):
     with open(LOG_FILE, "r", encoding="utf-8") as f:
         log_data = json.load(f)
     print(f"  Status: FOUND ({LOG_FILE})")
-    print(f"  Articles logged: {log_data.get('total_documents_collected', 'N/A')}")
-    print(f"  Logged bytes:    {log_data.get('total_raw_bytes', 'N/A'):,} bytes")
-    print(f"  Timestamp:       {log_data.get('collection_timestamp', 'N/A')}")
+    documents = log_data.get(
+        "total_documents", log_data.get("total_documents_collected", "N/A")
+    )
+    logged_bytes = log_data.get("total_bytes", log_data.get("total_raw_bytes", 0))
+    collected_at = log_data.get(
+        "collected_at", log_data.get("collection_timestamp", "N/A")
+    )
+    print(f"  Articles logged: {documents}")
+    print(f"  Logged bytes:    {logged_bytes:,} bytes")
+    print(f"  Timestamp:       {collected_at}")
 else:
     print(f"  [WARNING]: Audit log not found at {LOG_FILE}")
 

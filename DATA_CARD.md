@@ -1,50 +1,21 @@
-# DATA CARD: Urdu Monolingual Pretraining Corpus
+# Urdu Corpus Data Card
 
----
+| Source / genre | URL | Licence / terms | Collected | Raw → cleaned (MiB) |
+|---|---|---|---|---:|
+| HumSub, literature/blogs | humsub.com.pk | Site terms; no redistribution licence claimed | 2026-10-11 | 51.92 → 51.86 |
+| Urdu Wikipedia, encyclopedia | dumps.wikimedia.org/urwiki | CC BY-SA 4.0 | Oct 2026 | 359.64 → 351.31 |
+| CC-100 Urdu, web crawl | data.statmt.org/cc-100 | Common Crawl/dataset terms; verify applicable terms | Oct 2026 | 1,534.89 → 1,524.15 |
 
-## 1. Table of Sources
+**Corpus:** 1,927.33 MiB cleaned text before delimiters; 736,216 documents; 240,192,534 words; 2,985,664 unique words. Fixed-seed (42), document-level splits: train 98% (1,912.47 MiB; 721,491 docs), validation 1% (19.49 MiB; 7,362 docs), test 1% (19.26 MiB; 7,363 docs). Each document ends with `<|endoftext|>`.
 
-| Source | Genre | URL / Origin | Licence / Terms | Collection Date | Raw Size | Cleaned Size |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **HumSub** | Literature & Blogs | `https://www.humsub.com.pk` (REST API) | Site terms; collected for course research, not a redistribution license | October 11, 2026 | 51.92 MiB | 51.86 MiB |
-| **Urdu Wikipedia** | Encyclopedia | `https://dumps.wikimedia.org/urwiki/` | CC BY-SA 4.0 | October 2026 | 359.64 MiB | 351.31 MiB |
-| **CC-100 (Urdu)** | Web Crawl | `https://data.statmt.org/cc-100/` | Common Crawl / dataset terms | October 2026 | 1,534.89 MiB | 1,524.15 MiB |
-| **Total** | **3 Sources, 3 Genres** | — | — | — | **1,946.45 MiB** | **1,927.33 MiB** |
+| Cleaning step | Size after step (MiB) | Removed (MiB) |
+|---|---:|---:|
+| Combined raw inputs | 1,946.45 | — |
+| Strip wiki markup / links | 1,946.33 | 0.12 |
+| Normalize Unicode, digits, whitespace | 1,942.14 | 4.19 |
+| Urdu-character filter (<60%) | 1,933.16 | 8.97 |
+| Exact-document SHA-256 deduplication | 1,927.33 | 5.83 |
 
-*Evidence for Custom Collection*: `logs/scrape_log.json` records 5,279 collected articles, URLs, byte sizes, and timestamps.
+Normalization maps Arabic yeh/kaf/heh variants to Urdu forms, removes tatweel and BOM, and maps digits to ASCII. Natural English code-mixing and diacritics are retained.
 
----
-
-## 2. Corpus Totals
-
-- **Clean Corpus Size**: 1,927.33 MiB before document delimiters
-- **Total Clean Documents**: 736,216
-- **Total Word Count**: 240,192,534 words
-- **Unique Word Count (Vocabulary)**: 2,985,664 distinct words
-- **Document-Level Splits (seed=42)**:
-  - `train.txt`: 98% (1,912.47 MiB, 721,491 documents)
-  - `val.txt`: 1% (19.49 MiB, 7,362 documents)
-  - `test.txt`: 1% (19.26 MiB, 7,363 documents)
-- **Document Delimiter**: `<|endoftext|>`
-
-Split files include document delimiters and separator newlines, so their combined size is larger than the cleaned document text total.
-
----
-
-## 3. Cleaning Pipeline Reductions
-
-| Pipeline Step | Output Size (MiB) | Text Removed (MiB) | Description |
-| :--- | :--- | :--- | :--- |
-| **0. Raw Input** | 1,946.45 MiB | — | Raw combined text across all three sources |
-| **1. Markup Stripping** | 1,946.33 MiB | 0.12 MiB | Stripped wiki headers (`== ... ==`), links, HTML tags |
-| **2. Unicode Normalization** | 1,942.14 MiB | 4.19 MiB | Custom `src/normalize.py`: Yeh/Kaf/Heh unified, Tatweel/BOM removed, digits to ASCII 0-9 |
-| **3. Urdu Language Filter** | 1,933.16 MiB | 8.97 MiB | Dropped documents with <60% Urdu character ratio while retaining natural English code-mixing |
-| **4. SHA-256 Deduplication** | 1,927.33 MiB | 5.83 MiB | Exact document deduplication using cryptographic SHA-256 hashes |
-
----
-
-## 4. Known Gaps and Biases
-
-1. **Genre Representation**: The corpus balances encyclopedia prose (Wikipedia), formal literary/blog essays (HumSub), and diverse web crawl (CC-100). Colloquial chat and social media slang are underrepresented relative to formal and journalistic Urdu.
-2. **Orthographic Standardization**: Prevalent Arabic keyboard artifacts (`ي`, `ك`, `ه`) have been normalized to Urdu Unicode graphemes (`ی`, `ک`, `ہ`), preserving vocabulary compactness.
-3. **Diacritics & Code-Mixing**: Rare diacritics (اعراب) have been retained to allow phonetic and poetic learning. Natural English code-mixing within Urdu sentences is preserved, while English-dominated spam was removed.
+**Gaps and bias:** CC-100 contributes about 79% of cleaned bytes; social, conversational, and regional Urdu are underrepresented. HumSub provides 5,279 scraped articles (54,529,631 raw bytes; see `logs/scrape_log.json`). Only the HumSub raw file is present locally; Wikipedia and CC-100 raw inputs are absent, so the full cleaning run is not reproducible from this checkout. Verify each source's current terms before redistribution; the corpus and raw text are not included in the submission archive.

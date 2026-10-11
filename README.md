@@ -1,105 +1,103 @@
-# CS 417 Urdu BPE Tokenizer
+# Urdu Byte-Level BPE Tokenizer
 
-Assignment 1 implementation and deliverables for a byte-level Urdu BPE tokenizer.
+CS 417 Assignment 1: a cleaned Urdu corpus and a byte-level BPE tokenizer trained to 50,000 vocabulary entries. The corpus cleaner keeps document boundaries; the tokenizer pre-tokenizes words, learns byte merges, and preserves input text during encode/decode. Separate analysis compares its merge behavior and tokens-per-word with GPT-2 and `o200k_base`.
 
-## Status
+## Requirements
 
-- The 50,000-entry tokenizer is trained with all 49,743 merges.
-- Recorded full training took 337.1s to count and 173.7s to learn merges (510.8s total), using 2,332 MiB peak memory on the logged Linux host (Python 3.14.8, 12 cores).
-- The real 1 MiB reference/fast check matched all 2,000 merges (266.0s reference, 1.0s fast); round-trip passed.
-- `data/encoded/train.bin` and `data/encoded/val.bin` are flat `uint16` arrays.
-- The final Part C report is `reports/report.pdf` (3 pages).
-- The single corpus card is `DATA_CARD.md`.
-- Large corpus and binary files are kept outside the source archive for shared-drive hosting.
+- Python 3.10 or newer
+- Packages in `requirements.txt`
+- The corpus text files for training, encoding, and analysis; large data files are not tracked by Git
 
-## Layout
-
-```text
-src/
-  normalize.py          Unicode normalization
-  bpe.py                public BPETokenizer API and smoke test
-  bpe_tokenizer.py      corpus handling, encode/decode, and serialization
-  bpe_training.py       reference and heap-optimized BPE training
-  bpe_tokens.py         token IDs, Urdu regex, byte merge, heap ordering
-  train_tokenizer.py    required training entry point
-  encode_corpus.py      required uint16 encoder entry point
-scripts/
-  scrape_corpus.py      custom HumSub collection
-  clean_corpus.py       cleaning, deduplication, and document splits
-  verify_raw_data.py   source file verification
-  download_data.py      prepared corpus downloader
-  test_bpe.py           tokenizer tests and real-sample comparison
-  analyze_tokenizer.py  Part C analysis CLI
-  analysis_merges.py    merge, UTF-8, and token-length analysis
-  analysis_metrics.py   tokens-per-word comparison and test inputs
-  output_utils.py       shared CLI output formatting
-data/
-  raw/                  locally collected/source material; not archived
-  processed/            train.txt, val.txt, test.txt; shared-drive deliverables
-  encoded/               train.bin, val.bin; shared-drive deliverables
-models/
-  tokenizer.json        trained model with 49,743 ordered merges
-logs/                    training, encoding, and test logs
-analysis/                generated Part C Markdown
-reports/
-  report.pdf             final report, at most four pages
-docs/
-  ARCHITECTURE.md        code and data flow
-  ASSIGNMENT_CHECKLIST.md requirements audit and remaining actions
-DATA_CARD.md             single corpus data card
-README.md                this guide
-```
-
-## Setup and Checks
-
-Run from the repository root:
+From the repository root, create an environment and install dependencies:
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+```
+
+On Windows, activate with `.venv\\Scripts\\activate` instead. To fetch the prepared text files from the configured shared Drive folder, run:
+
+```bash
+python scripts/download_data.py --subfolder processed
+```
+
+This downloads text files into `data/processed/` if the folder is accessible. Otherwise obtain `train.txt`, `val.txt`, and `test.txt` from the course/shared-drive location and place them there. Training needs `train.txt`; encoding needs train and validation; analysis needs train and test. The current checkout has these processed splits, but not the Wikipedia or CC-100 raw inputs.
+
+## Run and Test
+
+Run commands from the repository root. The normalizer has a small built-in check; the BPE test covers the sanity example, Urdu-aware pre-tokenization, lossless round trips, serialization, and reference/fast equivalence on generated small cases.
+
+```bash
 python src/normalize.py
 python scripts/test_bpe.py
+```
+
+Compare reference and optimized training on the first 1 MB of the corpus (2,000 merges; reference mode is intentionally slow):
+
+```bash
 python scripts/test_bpe.py --train data/processed/train.txt --ref-merges 2000
 ```
 
-## Rebuild the Tokenizer
+Check source files and the HumSub collection audit log with:
 
-Exact full-corpus training command; it reads `train.txt` and writes the model and log separately:
+```bash
+python scripts/verify_raw_data.py
+```
+
+That command only checks the sources listed in the script; it reports missing raw files rather than downloading them.
+
+## Rebuild Outputs
+
+Train exactly 50,000 vocabulary entries (256 byte IDs, special ID 256, then 49,743 merges). This reads only `train.txt` and writes the model plus a full run log:
 
 ```bash
 python src/train_tokenizer.py --train data/processed/train.txt --out models/tokenizer.json --log logs/train_tokenizer.log --vocab-size 50000 --mode fast --min-freq 1 --checkpoint-every 5000
 ```
 
-Encode the required splits:
+Encode train and validation to flat `uint16` arrays under `data/encoded/`:
 
 ```bash
 python src/encode_corpus.py --tok models/tokenizer.json
 ```
 
-Rebuild Part C analysis:
+Generate the detailed Part C analysis (requires the test split and `tiktoken`, installed from requirements):
 
 ```bash
 python scripts/analyze_tokenizer.py --tokenizer models/tokenizer.json --train data/processed/train.txt --test data/processed/test.txt --output analysis/phase3_analysis.md
 ```
 
-The analyzer uses `tiktoken` only for the allowed GPT-2 and `o200k_base` comparison.
+The polished assignment report is `reports/report.pdf`; its editable source is `reports/report.html`. Full-corpus training and encoding take time and need enough free disk space for the corpus, checkpoints, logs, and binary outputs.
 
-## Corpus Commands
+## Corpus Rebuild
+
+The cleaner expects these raw inputs:
+
+- `data/raw/scraped/humsub_raw.txt`
+- `data/raw/wikipedia/wikipedia_raw.txt`
+- `data/raw/cc100/ur.txt`
+
+After placing the sources at those paths, run:
 
 ```bash
-python scripts/scrape_corpus.py
 python scripts/clean_corpus.py
-python scripts/verify_raw_data.py
-python scripts/download_data.py
 ```
 
-The cleaner expects source files under `data/raw/` and writes the document-level splits under `data/processed/`. It updates only the root `DATA_CARD.md`.
+It strips limited wiki markup, normalizes text, filters documents below a 60% Urdu-character ratio, deduplicates exact documents, shuffles with seed 42, and writes 98/1/1 document splits with `<|endoftext|>` delimiters. The HumSub scraper is `python scripts/scrape_corpus.py`; it uses the WordPress API and appends to its output. It does not automatically check `robots.txt`, so review the site’s current robots rules and terms before collecting; do not rerun against an existing raw file unless you intend to append. Raw-source licenses and redistribution terms must be verified before submission.
+
+## Project Map
+
+- `src/`: normalizer, tokenizer implementation, training and encoding entry points
+- `scripts/`: corpus collection/cleaning, checks, and analysis
+- `data/`: raw inputs, processed splits, and encoded arrays; large data is ignored by Git
+- `models/`, `logs/`, `analysis/`, `reports/`: model and generated run/analysis artifacts
+- `DATA_CARD.md`: corpus sources, sizes, cleaning, and known biases
+- `docs/ASSIGNMENT_CHECKLIST.md`: requirement-by-requirement evidence and open actions
+- `explanation/`: local module walkthroughs; intentionally ignored by Git
+
+Module-level explanations are indexed in `explanation/README.md`.
 
 ## Submission
 
-Archive the source (`src/`, `scripts/`, `docs/`), `models/tokenizer.json`, `DATA_CARD.md`, `README.md`, and `reports/report.pdf`. Provide a shared-drive link for:
-
-- `data/processed/train.txt`
-- `data/processed/val.txt`
-- `data/processed/test.txt`
-- `data/encoded/train.bin`
-- `data/encoded/val.bin`
+Archive the code, `models/tokenizer.json`, `DATA_CARD.md`, `README.md`, and `reports/report.pdf`. Provide a shared-drive link for `train.txt`, `val.txt`, `test.txt`, `train.bin`, and `val.bin`. Do not publish raw source text unless its terms explicitly allow redistribution.

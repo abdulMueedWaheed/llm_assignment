@@ -5,7 +5,7 @@
 
 ## Training Runtime
 
-Full-corpus training used 337.1s for counting and 173.7s for merge learning (510.8s total). Recorded system: Linux-7.2.9-200.fc44.x86_64-x86_64-with-glibc2.43; Python 3.14.8; 12 CPU cores; peak memory 2332 MB. CPU model: not reported by platform.processor().
+Full-corpus training used 174.0s for counting and 201.7s for merge learning (375.7s total). Recorded system: Linux-7.2.9-200.fc44.x86_64-x86_64-with-glibc2.43; Python 3.12.15; 12 CPU cores; peak memory 2329 MB. CPU model: not reported by platform.processor().
 
 ## 1. Merge Analysis
 

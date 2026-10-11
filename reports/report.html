@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Urdu Byte-Level BPE | Assignment Report</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #182a32;
+      --muted: #52656c;
+      --line: #ced8d8;
+      --paper: #ffffff;
+      --wash: #f1f6f4;
+      --teal: #087e78;
+      --amber: #bc6b23;
+      --soft-amber: #fbf2e8;
+      --body-font: "Source Sans 3", "Noto Sans", sans-serif;
+      --urdu-font: "Noto Naskh Arabic", "Noto Sans Arabic", serif;
+    }
+    * { box-sizing: border-box; }
+    @page {
+      size: A4 landscape;
+      margin: 8mm 12mm 8mm;
+      @bottom-left {
+        color: #52656c;
+        content: "CS 417  |  Urdu byte-level BPE";
+        font: 8pt var(--body-font);
+      }
+      @bottom-right {
+        color: #52656c;
+        content: counter(page) " / 3";
+        font: 8pt var(--body-font);
+      }
+    }
+    html { background: #e9efed; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 10pt/1.32 var(--body-font);
+      letter-spacing: 0;
+    }
+    .page {
+      position: relative;
+      width: 100%;
+      padding: 0;
+      break-after: page;
+    }
+    .page:last-child { break-after: auto; }
+    .masthead {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 0 7px;
+      border-bottom: 2px solid var(--teal);
+      color: var(--muted);
+      font-size: 8pt;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .masthead span:last-child { color: var(--teal); }
+    h1 {
+      margin: 12px 0 3px;
+      font-size: 25pt;
+      line-height: 1.05;
+      font-weight: 750;
+    }
+    .dek { margin: 0 0 10px; color: var(--muted); font-size: 11pt; }
+    h2 {
+      display: flex;
+      align-items: baseline;
+      gap: 7px;
+      margin: 11px 0 5px;
+      font-size: 14pt;
+      line-height: 1.1;
+    }
+    h2 .number { color: var(--teal); font-size: 9pt; }
+    h3 { margin: 7px 0 4px; font-size: 10pt; }
+    p { margin: 4px 0 7px; }
+    .lead { max-width: 900px; color: var(--muted); }
+    .metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr 2fr;
+      gap: 6px;
+      margin: 9px 0 9px;
+    }
+    .metric {
+      min-height: 49px;
+      padding: 6px 9px;
+      background: var(--wash);
+      border-left: 3px solid var(--teal);
+    }
+    .metric strong { display: block; font-size: 15pt; line-height: 1.08; }
+    .metric span { color: var(--muted); font-size: 8pt; }
+    .runtime { display: flex; align-items: center; font-size: 9pt; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 8.5pt;
+    }
+    th {
+      padding: 4px 6px;
+      color: #fff;
+      background: #24434a;
+      text-align: left;
+      font-weight: 700;
+    }
+    td {
+      padding: 3px 6px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    tbody tr:nth-child(even) { background: #f5f8f7; }
+    .merge-table { font-size: 8pt; }
+    .merge-table td { padding-top: 2px; padding-bottom: 2px; }
+    .merge-table th:nth-child(odd) { width: 8%; }
+    .merge-table th:nth-child(even) { width: 42%; }
+    .merge-id { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .token {
+      font-family: var(--urdu-font);
+      font-size: 10pt;
+      unicode-bidi: isolate;
+    }
+    .token-cell { text-align: right; }
+    .invalid { color: #8a4c14; }
+    .checkpoint { background: var(--soft-amber) !important; }
+    code {
+      color: #663f17;
+      font: 7.5pt/1.2 ui-monospace, monospace;
+      white-space: nowrap;
+    }
+    .note {
+      margin-top: 7px;
+      padding: 6px 9px;
+      border-left: 3px solid var(--amber);
+      background: var(--soft-amber);
+      font-size: 8.5pt;
+    }
+    .compact { font-size: 8pt; }
+    .long-table { font-size: 7.8pt; }
+    .long-table td { padding-top: 4px; padding-bottom: 4px; }
+    .long-table th:nth-child(1), .long-table th:nth-child(4) { width: 8%; }
+    .long-table th:nth-child(2), .long-table th:nth-child(5) { width: 8%; }
+    .long-table th:nth-child(3), .long-table th:nth-child(6) { width: 34%; }
+    .long-table .token { font-size: 9.4pt; }
+    .metric-table th:first-child { width: 23%; }
+    .metric-table th:not(:first-child) { text-align: right; }
+    .metric-table td:not(:first-child) {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .cases th:first-child { width: 15%; }
+    .cases th:nth-child(2) { width: 38%; }
+    .cases th:nth-child(3) { width: 13%; }
+    .cases th:nth-child(4) { width: 34%; }
+    .cases .token { font-size: 9.5pt; }
+    .section-tag {
+      margin: 0;
+      color: var(--teal);
+      font-size: 8pt;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .small { color: var(--muted); font-size: 8.5pt; }
+    .closing {
+      margin-top: 11px;
+      padding-top: 7px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 8pt;
+    }
+    code.pattern {
+      display: block;
+      margin: 3px 0;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .pattern-table td:first-child { width: 39%; }
+    .pattern-table code { white-space: normal; }
+    @media screen {
+      body { max-width: 1123px; margin: 24px auto; padding: 24px 32px; box-shadow: 0 8px 32px #132c3020; }
+      .page { min-height: 760px; padding-bottom: 28px; }
+    }
+    @media print {
+      html, body { background: #fff; }
+      .page { min-height: 0; }
+      .page:first-of-type h1 { margin: 7px 0 2px; font-size: 21pt; }
+      .page:first-of-type .dek { margin-bottom: 5px; font-size: 9pt; }
+      .page:first-of-type .metrics { gap: 4px; margin: 5px 0; }
+      .page:first-of-type .metric { min-height: 38px; padding: 4px 7px; }
+      .page:first-of-type .metric strong { font-size: 12pt; }
+      .page:first-of-type .runtime { font-size: 7.5pt; }
+      .page:first-of-type h2 { margin: 6px 0 3px; font-size: 12pt; }
+      .page:first-of-type .lead { margin: 3px 0 4px; font-size: 8pt; }
+      .page:first-of-type .merge-table { font-size: 7pt; line-height: 1.05; }
+      .page:first-of-type .merge-table td { padding: 1px 4px; }
+      .page:first-of-type .merge-table .token { font-size: 8.5pt; }
+      .page:first-of-type .note { margin-top: 4px; padding: 4px 7px; font-size: 7.5pt; }
+    }
+  </style>
+</head>
+<body>
+  <section class="page">
+    <div class="masthead"><span>CS 417  /  Assignment 1  /  Part C</span><span>Tokenizer report</span></div>
+    <h1>Urdu byte-level BPE</h1>
+    <p class="dek">Merge behavior, token efficiency, and diagnostic failure cases</p>
+
+    <div class="metrics">
+      <div class="metric"><strong>50,000</strong><span>vocabulary entries</span></div>
+      <div class="metric"><strong>49,743</strong><span>ordered merges</span></div>
+      <div class="metric runtime"><span><b>Training:</b> 375.7 s total (174.0 s counting, 201.7 s merges) &nbsp; | &nbsp; Python 3.12.15, 12 CPU cores, peak 2,329 MB; CPU model not recorded.</span></div>
+    </div>
+    <p class="small">Model: <code>models/tokenizer.json</code>. Training used the full train split with minimum word frequency 1. Recorded host: Linux 7.2.9, x86_64.</p>
+
+    <h2><span class="number">01</span> What did the merges learn?</h2>
+    <p class="lead">The first merges mostly reconstruct frequent two-byte Urdu letters, then combine leading spaces and letters into common word fragments. The table lists merges 1–50 and the requested 5,000-merge checkpoints; invalid byte fragments are shown in escaped form because they cannot be decoded independently.</p>
+
+    <table class="merge-table">
+      <thead><tr><th>Merge</th><th>Decoded token</th><th>Merge</th><th>Decoded token</th></tr></thead>
+      <tbody>
+        <tr><td class="merge-id">1</td><td class="token-cell"><bdi class="token" dir="auto">ا</bdi></td><td class="merge-id">2</td><td class="token-cell"><bdi class="token" dir="auto">ی</bdi></td></tr>
+        <tr><td class="merge-id">3</td><td class="invalid"><code>b'\x20\xd8'</code> (invalid UTF-8)</td><td class="merge-id">4</td><td class="token-cell"><bdi class="token" dir="auto">ک</bdi></td></tr>
+        <tr><td class="merge-id">5</td><td class="invalid"><code>b'\x20\xd9'</code> (invalid UTF-8)</td><td class="merge-id">6</td><td class="token-cell"><bdi class="token" dir="auto">ر</bdi></td></tr>
+        <tr><td class="merge-id">7</td><td class="token-cell"><bdi class="token" dir="auto">و</bdi></td><td class="merge-id">8</td><td class="token-cell"><bdi class="token" dir="auto">ہ</bdi></td></tr>
+        <tr><td class="merge-id">9</td><td class="token-cell"><bdi class="token" dir="auto">ے</bdi></td><td class="merge-id">10</td><td class="token-cell"><bdi class="token" dir="auto"> ک</bdi></td></tr>
+        <tr><td class="merge-id">11</td><td class="token-cell"><bdi class="token" dir="auto">ن</bdi></td><td class="merge-id">12</td><td class="invalid"><code>b'\xd8\xa7\xd8'</code> (invalid UTF-8)</td></tr>
+        <tr><td class="merge-id">13</td><td class="token-cell"><bdi class="token" dir="auto">ل</bdi></td><td class="merge-id">14</td><td class="token-cell"><bdi class="token" dir="auto">م</bdi></td></tr>
+        <tr><td class="merge-id">15</td><td class="token-cell"><bdi class="token" dir="auto"> م</bdi></td><td class="merge-id">16</td><td class="token-cell"><bdi class="token" dir="auto">ں</bdi></td></tr>
+        <tr><td class="merge-id">17</td><td class="token-cell"><bdi class="token" dir="auto"> ا</bdi></td><td class="merge-id">18</td><td class="token-cell"><bdi class="token" dir="auto">ت</bdi></td></tr>
+        <tr><td class="merge-id">19</td><td class="token-cell"><bdi class="token" dir="auto"> ہ</bdi></td><td class="merge-id">20</td><td class="token-cell"><bdi class="token" dir="auto">یں</bdi></td></tr>
+        <tr><td class="merge-id">21</td><td class="token-cell"><bdi class="token" dir="auto">س</bdi></td><td class="merge-id">22</td><td class="token-cell"><bdi class="token" dir="auto">د</bdi></td></tr>
+        <tr><td class="merge-id">23</td><td><code>CRLF (\\r\\n)</code></td><td class="merge-id">24</td><td class="token-cell"><bdi class="token" dir="auto"> س</bdi></td></tr>
+        <tr><td class="merge-id">25</td><td class="token-cell"><bdi class="token" dir="auto">ھ</bdi></td><td class="merge-id">26</td><td class="token-cell"><bdi class="token" dir="auto"> ب</bdi></td></tr>
+        <tr><td class="merge-id">27</td><td class="token-cell"><bdi class="token" dir="auto">گ</bdi></td><td class="merge-id">28</td><td class="token-cell"><bdi class="token" dir="auto"> کی</bdi></td></tr>
+        <tr><td class="merge-id">29</td><td class="token-cell"><bdi class="token" dir="auto"> کے</bdi></td><td class="merge-id">30</td><td class="token-cell"><bdi class="token" dir="auto">ب</bdi></td></tr>
+        <tr><td class="merge-id">31</td><td class="token-cell"><bdi class="token" dir="auto"> پ</bdi></td><td class="merge-id">32</td><td class="token-cell"><bdi class="token" dir="auto">ان</bdi></td></tr>
+        <tr><td class="merge-id">33</td><td class="token-cell"><bdi class="token" dir="auto"> ن</bdi></td><td class="merge-id">34</td><td class="token-cell"><bdi class="token" dir="auto">ور</bdi></td></tr>
+        <tr><td class="merge-id">35</td><td class="token-cell"><bdi class="token" dir="auto"> ت</bdi></td><td class="merge-id">36</td><td class="token-cell"><bdi class="token" dir="auto">۔</bdi></td></tr>
+        <tr><td class="merge-id">37</td><td class="token-cell"><bdi class="token" dir="auto"> ج</bdi></td><td class="merge-id">38</td><td class="token-cell"><bdi class="token" dir="auto">ار</bdi></td></tr>
+        <tr><td class="merge-id">39</td><td class="invalid"><code>b'\x20\xd8\xa7\xd8'</code> (invalid UTF-8)</td><td class="merge-id">40</td><td class="token-cell"><bdi class="token" dir="auto"> میں</bdi></td></tr>
+        <tr><td class="merge-id">41</td><td class="token-cell"><bdi class="token" dir="auto"> د</bdi></td><td class="merge-id">42</td><td class="token-cell"><bdi class="token" dir="auto">ف</bdi></td></tr>
+        <tr><td class="merge-id">43</td><td class="token-cell"><bdi class="token" dir="auto">ق</bdi></td><td class="merge-id">44</td><td class="token-cell"><bdi class="token" dir="auto">ٹ</bdi></td></tr>
+        <tr><td class="merge-id">45</td><td class="token-cell"><bdi class="token" dir="auto"> و</bdi></td><td class="merge-id">46</td><td class="token-cell"><bdi class="token" dir="auto">ع</bdi></td></tr>
+        <tr><td class="merge-id">47</td><td class="token-cell"><bdi class="token" dir="auto">ال</bdi></td><td class="merge-id">48</td><td class="token-cell"><bdi class="token" dir="auto"> ہے</bdi></td></tr>
+        <tr><td class="merge-id">49</td><td class="token-cell"><bdi class="token" dir="auto">ائ</bdi></td><td class="merge-id">50</td><td class="token-cell"><bdi class="token" dir="auto"> ر</bdi></td></tr>
+        <tr class="checkpoint"><td class="merge-id">5,000</td><td class="token-cell"><bdi class="token" dir="auto"> پریشانی</bdi></td><td class="merge-id">10,000</td><td class="token-cell"><bdi class="token" dir="auto"> ورحم</bdi></td></tr>
+        <tr class="checkpoint"><td class="merge-id">15,000</td><td class="token-cell"><bdi class="token" dir="auto"> انوکھی</bdi></td><td class="merge-id">20,000</td><td class="token-cell"><bdi class="token" dir="auto"> کاملہ</bdi></td></tr>
+        <tr class="checkpoint"><td class="merge-id">25,000</td><td class="token-cell"><bdi class="token" dir="auto"> ٹس</bdi></td><td class="merge-id">30,000</td><td class="token-cell"><bdi class="token" dir="auto">منون</bdi></td></tr>
+        <tr class="checkpoint"><td class="merge-id">35,000</td><td class="token-cell"><bdi class="token" dir="auto"> چکانا</bdi></td><td class="merge-id">40,000</td><td class="token-cell"><bdi class="token" dir="auto"> میَں</bdi></td></tr>
+        <tr class="checkpoint"><td class="merge-id">45,000</td><td class="token-cell"><bdi class="token" dir="auto">atis</bdi></td><td class="merge-id">49,743</td><td class="token-cell"><bdi class="token" dir="auto"> غپ</bdi></td></tr>
+      </tbody>
+    </table>
+    <p class="note">Twenty-one of the first 50 merges reconstruct two-byte Urdu letters. Merges 3, 5, 12, and 39 are partial UTF-8 sequences. Merge 20 first creates <bdi class="token" dir="auto">یں</bdi>, the earliest multi-letter token that also appears as a complete corpus pre-token; “whole word” here is a corpus-pre-token criterion, not morphological analysis.</p>
+  </section>
+
+  <section class="page">
+    <div class="masthead"><span>CS 417  /  Assignment 1  /  Part C</span><span>Vocabulary behavior</span></div>
+    <h2><span class="number">01</span> Twenty longest learned tokens</h2>
+    <p class="small">Ranked by UTF-8 byte length; leading spaces are part of tokens where shown.</p>
+    <table class="long-table">
+      <thead><tr><th>ID</th><th>Bytes</th><th>Token</th><th>ID</th><th>Bytes</th><th>Token</th></tr></thead>
+      <tbody>
+        <tr><td>26755</td><td>32</td><td class="token-cell"><bdi class="token" dir="auto">۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔۔</bdi></td><td>35817</td><td>30</td><td class="token-cell"><bdi class="token" dir="auto">چندرابابونائیڈو</bdi></td></tr>
+        <tr><td>19038</td><td>29</td><td class="token-cell"><bdi class="token" dir="auto"> انسائیکلوپیڈیا</bdi></td><td>36509</td><td>29</td><td class="token-cell"><bdi class="token" dir="auto"> انٹرکانٹینینٹل</bdi></td></tr>
+        <tr><td>29505</td><td>28</td><td class="token-cell"><bdi class="token" dir="auto">نارتھیمپٹنشائر</bdi></td><td>10120</td><td>27</td><td class="token-cell"><bdi class="token" dir="auto"> انانکارپوریٹڈ</bdi></td></tr>
+        <tr><td>18324</td><td>27</td><td class="token-cell"><bdi class="token" dir="auto"> خیبرپختونخواہ</bdi></td><td>31708</td><td>27</td><td class="token-cell"><bdi class="token" dir="auto"> پارلیمنٹیرینز</bdi></td></tr>
+        <tr><td>38710</td><td>27</td><td class="token-cell"><bdi class="token" dir="auto"> انگیزانکشافات</bdi></td><td>42258</td><td>27</td><td class="token-cell"><bdi class="token" dir="auto"> لاہورہائیکورٹ</bdi></td></tr>
+        <tr><td>49866</td><td>27</td><td class="token-cell"><bdi class="token" dir="auto"> غیرجانبدارانہ</bdi></td><td>26680</td><td>26</td><td class="token-cell"><bdi class="token" dir="auto"> -------------------------</bdi></td></tr>
+        <tr><td>37511</td><td>26</td><td class="token-cell"><bdi class="token" dir="auto">خیبرپختونخواہ</bdi></td><td>47785</td><td>26</td><td class="token-cell"><bdi class="token" dir="auto">لاہورہائیکورٹ</bdi></td></tr>
+        <tr><td>7682</td><td>25</td><td class="token-cell"><bdi class="token" dir="auto"> خیبرپختونخوا</bdi></td><td>23648</td><td>25</td><td class="token-cell"><bdi class="token" dir="auto"> امیرالمومنین</bdi></td></tr>
+        <tr><td>26325</td><td>25</td><td class="token-cell"><bdi class="token" dir="auto"> امیرالمؤمنین</bdi></td><td>27489</td><td>25</td><td class="token-cell"><bdi class="token" dir="auto"> اورنامورمصنف</bdi></td></tr>
+        <tr><td>32915</td><td>25</td><td class="token-cell"><bdi class="token" dir="auto"> دارالحکومتوں</bdi></td><td>37547</td><td>25</td><td class="token-cell"><bdi class="token" dir="auto"> انفرااسٹرکچر</bdi></td></tr>
+      </tbody>
+    </table>
+
+    <h2><span class="number">02</span> Tokens per whitespace-delimited word</h2>
+    <p class="small">Test-set ratios aggregate token counts and whitespace-delimited word counts. Hand examples are short diagnostics; special end-of-text markers are excluded.</p>
+    <table class="metric-table">
+      <thead><tr><th>Input</th><th>Words</th><th>Urdu BPE</th><th>GPT-2</th><th>o200k_base</th></tr></thead>
+      <tbody>
+        <tr><td>test.txt</td><td>2,367,063</td><td>1.222</td><td>6.102</td><td>1.638</td></tr>
+        <tr><td>News</td><td>15</td><td>1.133</td><td>5.733</td><td>1.533</td></tr>
+        <tr><td>Poetry</td><td>15</td><td>1.133</td><td>6.133</td><td>1.533</td></tr>
+        <tr><td>Urdu with English</td><td>12</td><td>1.500</td><td>4.000</td><td>1.333</td></tr>
+        <tr><td>Roman Urdu</td><td>9</td><td>3.000</td><td>2.667</td><td>2.000</td></tr>
+        <tr><td>Numbers and dates</td><td>11</td><td>2.455</td><td>6.091</td><td>2.455</td></tr>
+        <tr><td>Diacritics</td><td>7</td><td>2.429</td><td>7.857</td><td>3.857</td></tr>
+        <tr><td>Personal names</td><td>8</td><td>1.500</td><td>7.750</td><td>2.625</td></tr>
+      </tbody>
+    </table>
+    <p class="note">On the 2.37-million-word test split, this tokenizer averages 1.222 tokens per word, compared with 6.102 for GPT-2 and 1.638 for `o200k_base`. This indicates strong compression for the source distribution, not a general quality or language-modeling score; the selected examples expose where script and spelling coverage changes the result.</p>
+  </section>
+
+  <section class="page">
+    <div class="masthead"><span>CS 417  /  Assignment 1  /  Part C</span><span>Diagnostic cases</span></div>
+    <h2><span class="number">03</span> Three inputs handled least efficiently</h2>
+    <p class="lead">These are the three highest Urdu-BPE tokens-per-word ratios among the seven hand-picked inputs. Each tests a form that is less aligned with the Urdu-script word frequencies used for training.</p>
+    <table class="cases">
+      <thead><tr><th>Input type</th><th>Example</th><th>Urdu BPE / word</th><th>Why it fragments</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>Roman Urdu</b></td>
+          <td class="token-cell"><bdi class="token" dir="auto">Aaj mausam bohat khubsurat hai, chalo Islamabad chalte hain.</bdi></td>
+          <td>3.000</td>
+          <td>Romanized spellings vary and do not share the Urdu-script merges learned by this tokenizer.</td>
+        </tr>
+        <tr>
+          <td><b>Numbers and dates</b></td>
+          <td class="token-cell"><bdi class="token" dir="auto">قیمت ۱۲۵۰ روپے ہے؛ تاریخ 11-10-2026 اور وقت 9:45 بجے ہے۔</bdi></td>
+          <td>2.455</td>
+          <td>Mixed numeral conventions, punctuation, and date formats produce combinations that are not reusable word-like units.</td>
+        </tr>
+        <tr>
+          <td><b>Diacritics</b></td>
+          <td class="token-cell"><bdi class="token" dir="auto">اَللّٰهُ أَكْبَرُ، اُردُو کے اعراب اور حرکات</bdi></td>
+          <td>2.429</td>
+          <td>Combining marks add UTF-8 bytes and are relatively sparse, so marked words remain more fragmented.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Interpretation and limits</h2>
+    <p>The low test-split ratio reflects the tokenizer’s fit to a large Urdu-script corpus, while Roman Urdu is the clearest weakness in the selected set. Digit normalization is applied when preparing the corpus, but the hand-written diagnostic retains mixed digit forms, so its result also tests normalization mismatch.</p>
+    <p class="small">The three failure cases are maxima from seven manually selected inputs, not a representative benchmark. Tokens-per-word is a compression measure only; it does not evaluate semantic quality, downstream model performance, or fairness across Urdu varieties.</p>
+
+    <h3>Urdu-aware pre-tokenization</h3>
+    <code class="pattern">'s|'t|'re|'ve|'m|'ll|'d| ?[\p{L}\p{M}\u200c]+| ?\p{N}+| ?[^\s\p{L}\p{M}\p{N}\u200c]+|\s+(?!\S)|\s+</code>
+    <table class="compact pattern-table">
+      <thead><tr><th>Alternative</th><th>Behavior and reason</th></tr></thead>
+      <tbody>
+        <tr><td><code>'s|'t|'re|'ve|'m|'ll|'d</code></td><td>Keep common English contractions as separate pieces for naturally code-mixed Urdu.</td></tr>
+        <tr><td><code>?[\p{L}\p{M}\u200c]+</code></td><td>Group Unicode letters, combining marks, and ZWNJ. Marks and joiners stay inside the pre-token, so they do not create artificial BPE boundaries. <code>\p{L}</code> and <code>\p{M}</code> cover Urdu and other scripts.</td></tr>
+        <tr><td><code>?\p{N}+</code></td><td>Group a digit run independently from words; the optional leading ASCII space remains attached to it.</td></tr>
+        <tr><td><code>?[^\s\p{L}\p{M}\p{N}\u200c]+</code></td><td>Group runs of punctuation or symbols, excluding whitespace, letters, marks, digits, and ZWNJ; this avoids splitting punctuation into single-character pieces.</td></tr>
+        <tr><td><code>\s+(?!\S)|\s+</code></td><td>Consume whitespace runs, preferring trailing whitespace as one piece and then matching any remaining run. Together, the alternatives cover newlines without losing them.</td></tr>
+      </tbody>
+    </table>
+    <p class="small">Because BPE counts pairs within each pre-token, no learned merge crosses these boundaries. The normalization step is separate; this pattern preserves ZWNJ rather than removing it.</p>
+
+    <div class="closing">Analysis generated from `models/tokenizer.json`, `data/processed/test.txt`, and seven fixed diagnostic strings. Comparison encodings: `tiktoken` GPT-2 and `o200k_base`. Merge indices are one-based; token IDs follow the 256-byte base vocabulary and special ID 256.</div>
+  </section>
+</body>
+</html>
