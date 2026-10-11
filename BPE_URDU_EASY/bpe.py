@@ -2,6 +2,7 @@ import argparse
 from collections import Counter
 from collections import defaultdict
 from contextlib import redirect_stdout
+import heapq
 import json
 from pathlib import Path
 import sys
@@ -57,6 +58,27 @@ def merge_pair_left_to_right(
     return merged_ids
 
 
+class PairHeapEntry:
+    __slots__ = ("count", "byte_key", "pair")
+
+    def __init__(
+        self,
+        count: int,
+        byte_key: tuple[bytes, bytes],
+        pair: tuple[int, int],
+    ) -> None:
+        self.count = count
+        self.byte_key = byte_key
+        self.pair = pair
+
+    def __lt__(self, other: "PairHeapEntry") -> bool:
+        if self.count != other.count:
+            return self.count > other.count
+        if self.byte_key != other.byte_key:
+            return self.byte_key > other.byte_key
+        return self.pair > other.pair
+
+
 class UrduBPETokenizer:
     def __init__(self) -> None:
         self.word_pattern = regex.compile(URDU_WORD_PATTERN)
@@ -85,7 +107,6 @@ class UrduBPETokenizer:
             for line in input_file:
                 bytes_read += len(line.encode("utf-8", errors="surrogatepass"))
 
-                # split special markers out so they cannot be merged
                 for text_part in line.split(SPECIAL_TEXT):
                     for match in self.word_pattern.finditer(text_part):
                         yield match.group()
@@ -107,8 +128,6 @@ class UrduBPETokenizer:
         log_every: int = 1_000,
         log: Callable[[str], object] = print,
     ) -> list[tuple[int, int]]:
-        # the reference version stores every word occurrence and recounts
-        # every pair over the whole corpus after each merge
         self.check_training_settings(vocabulary_size, log_every)
         running_words = [
             list(word.encode("utf-8", errors="surrogatepass"))
@@ -130,7 +149,6 @@ class UrduBPETokenizer:
         for merge_number in range(merge_count):
             pair_counts: Counter[tuple[int, int]] = Counter()
 
-            # this full recount is what makes the reference version simple
             for word in running_words:
                 pair_counts.update(zip(word, word[1:]))
 
@@ -178,8 +196,6 @@ class UrduBPETokenizer:
         checkpoint: Callable[[list[tuple[int, int]]], object] | None = None,
         verify_counts: bool = False,
     ) -> list[tuple[int, int]]:
-        # the fast version keeps each different word once, but weights its
-        # pair counts by how often that word appeared in the input
         self.check_training_settings(vocabulary_size, log_every)
         if min_frequency < 1:
             raise ValueError("minimum frequency must be at least 1")
@@ -246,8 +262,6 @@ class UrduBPETokenizer:
         checkpoint: Callable[[list[tuple[int, int]]], object] | None,
         verify_counts: bool,
     ) -> list[tuple[int, int]]:
-        # pair_counts stores total pair counts; pair_to_words says which
-        # distinct words contain each pair. no heap is used in this version.
         pair_counts: defaultdict[tuple[int, int], int] = defaultdict(int)
         pair_to_words: defaultdict[tuple[int, int], set[int]] = defaultdict(set)
 
@@ -260,30 +274,41 @@ class UrduBPETokenizer:
         learned_merges = []
         start_time = time.perf_counter()
 
+        def make_entry(pair: tuple[int, int], count: int) -> PairHeapEntry:
+            return PairHeapEntry(
+                count,
+                (byte_vocabulary[pair[0]], byte_vocabulary[pair[1]]),
+                pair,
+            )
+
+        heap = [make_entry(pair, count) for pair, count in pair_counts.items()]
+        heapq.heapify(heap)
+
         for merge_number in range(merge_count):
-            if not pair_counts:
+            best_pair = None
+            best_count = 0
+            while heap:
+                entry = heapq.heappop(heap)
+                actual_count = pair_counts.get(entry.pair, 0)
+                if actual_count == entry.count and actual_count > 0:
+                    best_pair = entry.pair
+                    best_count = actual_count
+                    break
+                if 0 < actual_count < entry.count:
+                    heapq.heappush(heap, make_entry(entry.pair, actual_count))
+
+            if best_pair is None:
                 break
 
-            # choose the highest count; byte values break ties consistently
-            best_pair = max(
-                pair_counts,
-                key=lambda pair: (
-                    pair_counts[pair],
-                    byte_vocabulary[pair[0]],
-                    byte_vocabulary[pair[1]],
-                    pair,
-                ),
-            )
-            best_count = pair_counts[best_pair]
             new_id = FIRST_MERGE_ID + merge_number
             byte_vocabulary[new_id] = (
                 byte_vocabulary[best_pair[0]] + byte_vocabulary[best_pair[1]]
             )
             learned_merges.append(best_pair)
             changed_pairs: set[tuple[int, int]] = set()
+            previous_counts: dict[tuple[int, int], int] = {}
             affected_word_ids = list(pair_to_words[best_pair])
 
-            # only visit words that contained the pair being merged
             for word_id in affected_word_ids:
                 old_word = running_words[word_id]
                 new_word = merge_pair_left_to_right(old_word, best_pair, new_id)
@@ -297,6 +322,7 @@ class UrduBPETokenizer:
                     if difference == 0:
                         continue
 
+                    previous_counts.setdefault(pair, pair_counts.get(pair, 0))
                     pair_counts[pair] += difference * frequencies[word_id]
                     changed_pairs.add(pair)
 
@@ -308,9 +334,16 @@ class UrduBPETokenizer:
                 running_words[word_id] = new_word
 
             for pair in changed_pairs:
-                if pair_counts[pair] <= 0:
+                count = pair_counts[pair]
+                if count <= 0:
                     pair_counts.pop(pair, None)
                     pair_to_words.pop(pair, None)
+                elif count > previous_counts[pair]:
+                    heapq.heappush(heap, make_entry(pair, count))
+
+            if len(heap) > 3 * len(pair_counts) + 100_000:
+                heap = [make_entry(pair, count) for pair, count in pair_counts.items()]
+                heapq.heapify(heap)
 
             if verify_counts:
                 self.check_pair_indexes(
@@ -328,6 +361,7 @@ class UrduBPETokenizer:
                     f"[fast] {merge_number + 1:,}/{merge_count:,} merges"
                     f" | best pair count: {best_count:,}"
                     f" | pairs: {len(pair_counts):,}"
+                    f" | heap: {len(heap):,}"
                     f" | elapsed: {elapsed:.0f}s"
                     f" | estimated remaining: {remaining / 3600:.2f}h"
                 )

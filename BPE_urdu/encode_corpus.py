@@ -1,5 +1,3 @@
-"""Encode corpus text into a flat uint16 token array."""
-
 import argparse
 from contextlib import redirect_stdout
 import os
@@ -10,238 +8,275 @@ import time
 import numpy as np
 from tqdm import tqdm
 
-from bpe import BPETokenizer, SPECIAL, SPECIAL_ID, open_text
+from bpe import SPECIAL_ID, SPECIAL_TEXT, UrduBPETokenizer, open_text_file
 from output_utils import (
     Tee,
-    format_duration,
-    local_timestamp,
-    print_field,
-    print_header,
-    print_section,
+    clock_time,
+    show_section,
+    show_title,
+    show_value,
+    time_taken,
 )
 
-TOKEN_CHUNK = 50_000_000
-OUTPUT_BUFFER_TOKENS = 1_000_000
+
+OUTPUT_BUFFER_SIZE = 1_000_000
+READ_BACK_CHUNK_SIZE = 50_000_000
 
 
-def first_document(path: str | Path, max_chars: int = 5_000_000) -> str | None:
-    """Read the first document's text, bounded to avoid huge verification reads."""
-    pieces = []
-    chars_read = 0
-    with open_text(path) as source:
-        while chars_read < max_chars:
-            piece = source.read(min(1_000_000, max_chars - chars_read))
-            if not piece:
+def read_first_document(path: str | Path) -> str | None:
+    collected_text = []
+    character_count = 0
+
+    with open_text_file(path) as input_file:
+        while character_count < 5_000_000:
+            text_part = input_file.read(1_000_000)
+            if not text_part:
                 break
-            chars_read += len(piece)
-            pieces.append(piece)
-            joined = "".join(pieces)
-            if SPECIAL in joined:
-                return joined.split(SPECIAL, 1)[0]
+            character_count += len(text_part)
+            collected_text.append(text_part)
+            full_text = "".join(collected_text)
+            if SPECIAL_TEXT in full_text:
+                return full_text.split(SPECIAL_TEXT, 1)[0]
+
     return None
 
 
-def verify_bin(
-    tokenizer: BPETokenizer,
-    binary_path: str | Path,
-    text_path: str | Path,
-    expected_tokens: int,
-    expected_specials: int,
+def check_binary_file(
+    tokenizer: UrduBPETokenizer,
+    binary_path: Path,
+    text_path: Path,
+    token_count: int,
+    marker_count: int,
 ) -> None:
-    if os.path.getsize(binary_path) != 2 * expected_tokens:
-        raise ValueError("binary file size is not two bytes per token")
-    if expected_tokens:
-        data = np.memmap(binary_path, dtype=np.uint16, mode="r")
-        if len(data) != expected_tokens:
-            raise ValueError("token count differs from the number written")
-        max_id = 0
-        special_count = 0
-        for start in range(0, len(data), TOKEN_CHUNK):
-            chunk = data[start:start + TOKEN_CHUNK]
-            max_id = max(max_id, int(chunk.max()))
-            special_count += int(np.count_nonzero(chunk == SPECIAL_ID))
+    if binary_path.stat().st_size != token_count * 2:
+        raise ValueError("binary size is not two bytes for each token")
+
+    if token_count:
+        token_array = np.memmap(binary_path, dtype=np.uint16, mode="r")
+        highest_id = 0
+        found_markers = 0
+
+        for start in range(0, len(token_array), READ_BACK_CHUNK_SIZE):
+            part = token_array[start:start + READ_BACK_CHUNK_SIZE]
+            highest_id = max(highest_id, int(part.max()))
+            found_markers += int(np.count_nonzero(part == SPECIAL_ID))
     else:
-        data = np.empty(0, dtype=np.uint16)
-        max_id = 0
-        special_count = 0
+        token_array = np.empty(0, dtype=np.uint16)
+        highest_id = 0
+        found_markers = 0
 
-    if max_id >= len(tokenizer.vocab):
-        raise ValueError(f"token ID {max_id} is outside the vocabulary")
-    if special_count != expected_specials:
-        raise ValueError(
-            f"binary has {special_count} end-of-text IDs; text has {expected_specials}"
-        )
-    print_field("Binary validation", "Passed")
-    print_field("Data type", "uint16")
-    print_field("Token count", f"{expected_tokens:,}")
-    print_field("Maximum token ID", max_id)
-    print_field("End-of-text markers", f"{special_count:,}")
+    if highest_id >= len(tokenizer.vocabulary):
+        raise ValueError(f"token id {highest_id} is not in the vocabulary")
+    if found_markers != marker_count:
+        raise ValueError("special marker count in the binary does not match text")
 
-    document = first_document(text_path)
-    if document is None:
-        print_field("First-document check", "Skipped (no complete delimiter in range)")
+    show_section("BINARY CHECK")
+    show_value("Result", "Passed")
+    show_value("Data type", "uint16")
+    show_value("Tokens", f"{token_count:,}")
+    show_value("Highest token id", highest_id)
+    show_value("Special markers", f"{found_markers:,}")
+
+    first_document = read_first_document(text_path)
+    if first_document is None:
+        show_value("First document", "Check skipped; no marker found")
         return
+
     document_end = None
-    for start in range(0, len(data), TOKEN_CHUNK):
-        chunk = data[start:start + TOKEN_CHUNK]
-        delimiters = np.flatnonzero(chunk == SPECIAL_ID)
-        if len(delimiters):
-            document_end = start + int(delimiters[0])
+    for start in range(0, len(token_array), READ_BACK_CHUNK_SIZE):
+        part = token_array[start:start + READ_BACK_CHUNK_SIZE]
+        marker_positions = np.flatnonzero(part == SPECIAL_ID)
+        if len(marker_positions):
+            document_end = start + int(marker_positions[0])
             break
+
     if document_end is None:
-        print_field(
-            "First-document check",
-            "Skipped (document exceeds verification limit)",
-        )
+        show_value("First document", "Check skipped; document is too long")
         return
-    decoded = tokenizer.decode(map(int, data[:document_end]))
-    if decoded != document:
-        raise ValueError("first document does not round-trip from the binary file")
-    print_field("First-document check", f"Passed ({len(document):,} characters)")
+
+    decoded = tokenizer.decode(map(int, token_array[:document_end]))
+    if decoded != first_document:
+        raise ValueError("the first document did not decode back to its text")
+    show_value("First document", "Round trip passed")
+
+
+def encode_one_file(
+    tokenizer: UrduBPETokenizer,
+    input_path: Path,
+    output_path: Path,
+    check_every: int,
+) -> tuple[int, int, int]:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = Path(str(output_path) + ".tmp")
+    text_bytes = input_path.stat().st_size
+    token_count = 0
+    marker_count = 0
+    token_buffer = []
+
+    with open_text_file(input_path) as input_file:
+        with open(temporary_path, "wb") as output_file:
+            with tqdm(
+                total=text_bytes,
+                unit="B",
+                unit_scale=True,
+                dynamic_ncols=True,
+                bar_format=(
+                    "{l_bar}{bar:30} | {n_fmt}/{total_fmt} "
+                    "[{elapsed}<{remaining}, {rate_fmt}]"
+                ),
+            ) as progress:
+                for line_number, line in enumerate(input_file, start=1):
+                    encoded_ids = tokenizer.encode(line)
+
+                    if check_every and line_number % check_every == 0:
+                        if tokenizer.decode(encoded_ids) != line:
+                            raise ValueError(
+                                f"line {line_number} failed its round trip"
+                            )
+
+                    marker_count += line.count(SPECIAL_TEXT)
+                    token_buffer.extend(encoded_ids)
+                    progress.update(
+                        len(line.encode("utf-8", errors="surrogatepass"))
+                    )
+
+                    if len(token_buffer) >= OUTPUT_BUFFER_SIZE:
+                        if max(token_buffer) >= len(tokenizer.vocabulary):
+                            raise ValueError(
+                                "an encoded token id is outside the vocabulary"
+                            )
+                        np.asarray(token_buffer, dtype=np.uint16).tofile(
+                            output_file
+                        )
+                        token_count += len(token_buffer)
+                        token_buffer.clear()
+
+                if token_buffer:
+                    if max(token_buffer) >= len(tokenizer.vocabulary):
+                        raise ValueError(
+                            "an encoded token id is outside the vocabulary"
+                        )
+                    np.asarray(token_buffer, dtype=np.uint16).tofile(output_file)
+                    token_count += len(token_buffer)
+
+    check_binary_file(
+        tokenizer,
+        temporary_path,
+        input_path,
+        token_count,
+        marker_count,
+    )
+    os.replace(temporary_path, output_path)
+    return token_count, marker_count, text_bytes
+
+
+def encode_with_report(
+    tokenizer_path: Path,
+    input_path: Path,
+    output_path: Path,
+    report_path: Path,
+    check_every: int,
+) -> None:
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(report_path, "w", encoding="utf-8", newline="\n") as report:
+        with redirect_stdout(Tee(sys.stdout, report)):
+            start_clock = clock_time()
+            start_timer = time.perf_counter()
+            finished = False
+
+            show_title("URDU BPE CORPUS ENCODING")
+            show_section(f"INPUT: {input_path.name}")
+            show_value("Started at", start_clock)
+            show_value("Text file", input_path.resolve())
+            show_value("Tokenizer", tokenizer_path.resolve())
+            show_value("Binary output", output_path.resolve())
+            show_value("Text report", report_path.resolve())
+
+            try:
+                tokenizer = UrduBPETokenizer.load(tokenizer_path)
+                token_count, marker_count, text_bytes = encode_one_file(
+                    tokenizer,
+                    input_path,
+                    output_path,
+                    check_every,
+                )
+                show_section("ENCODING RESULTS")
+                show_value("Tokens written", f"{token_count:,}")
+                show_value("Special markers", f"{marker_count:,}")
+                show_value(
+                    "Text bytes per token",
+                    f"{text_bytes / max(token_count, 1):.3f}",
+                )
+                finished = True
+            finally:
+                end_clock = clock_time()
+                seconds = time.perf_counter() - start_timer
+                show_section("RUN TIME")
+                show_value("Status", "Completed" if finished else "Failed")
+                show_value("Finished at", end_clock)
+                show_value("Elapsed time", time_taken(seconds))
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    script_dir = Path(__file__).resolve().parent
-    project_dir = script_dir.parent
-    parser.add_argument(
-        "--tok",
-        default=str(script_dir / "outputs" / "tokenizer.json"),
-        help="trained tokenizer JSON (default: outputs/tokenizer.json)",
+    script_folder = Path(__file__).resolve().parent
+    project_folder = script_folder.parent
+    default_tokenizer = script_folder / "outputs" / "tokenizer.json"
+    default_inputs = [
+        project_folder / "data" / "processed" / "train.txt",
+        project_folder / "data" / "processed" / "val.txt",
+    ]
+
+    parser = argparse.ArgumentParser(
+        description="Encode train.txt and val.txt as uint16 files."
     )
+    parser.add_argument("--tok", default=str(default_tokenizer))
     parser.add_argument(
         "--inp",
-        help="input text file (default: encode both processed train.txt and val.txt)",
+        help="encode just this input file instead of train.txt and val.txt",
     )
-    parser.add_argument(
-        "--out",
-        help="output uint16 binary file (default: bin_outputs/<input-name>.bin)",
-    )
-    parser.add_argument(
-        "--log",
-        help="text report path (default: outputs/encode_corpus_<input>_log.txt)",
-    )
-    parser.add_argument(
-        "--check-every",
-        type=int,
-        default=2_000,
-        help="round-trip every Nth line while encoding (0 disables line checks)",
-    )
+    parser.add_argument("--out", help="binary output path; requires --inp")
+    parser.add_argument("--log", help="text report path; requires --inp")
+    parser.add_argument("--check-every", type=int, default=2_000)
     args = parser.parse_args()
+
     if args.check_every < 0:
         parser.error("--check-every cannot be negative")
+    if not Path(args.tok).is_file():
+        parser.error(f"tokenizer file does not exist: {args.tok}")
 
     if args.inp:
-        inputs = [Path(args.inp)]
+        input_paths = [Path(args.inp)]
     else:
-        if args.out:
-            parser.error("--out requires --inp when encoding a single file")
-        if args.log:
-            parser.error("--log requires --inp when encoding a single file")
-        inputs = [
-            project_dir / "data" / "processed" / "train.txt",
-            project_dir / "data" / "processed" / "val.txt",
-        ]
+        if args.out or args.log:
+            parser.error("--out and --log can only be used with --inp")
+        input_paths = default_inputs
 
-    missing_inputs = [str(path) for path in inputs if not path.is_file()]
-    if missing_inputs:
-        parser.error("input text file(s) not found: " + ", ".join(missing_inputs))
-    if not Path(args.tok).is_file():
-        parser.error(f"tokenizer file not found: {args.tok}")
+    missing_paths = [str(path) for path in input_paths if not path.is_file()]
+    if missing_paths:
+        parser.error("input file(s) not found: " + ", ".join(missing_paths))
 
-    for input_path in inputs:
-        output_path = Path(args.out) if args.out else (
-            script_dir / "bin_outputs" / f"{input_path.stem}.bin"
+    for input_path in input_paths:
+        output_path = (
+            Path(args.out)
+            if args.out
+            else script_folder / "bin_outputs" / f"{input_path.stem}.bin"
         )
-        log_path = Path(args.log) if args.log else (
-            script_dir
+        report_path = (
+            Path(args.log)
+            if args.log
+            else script_folder
             / "outputs"
             / f"encode_corpus_{input_path.stem}_log.txt"
         )
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        file_args = argparse.Namespace(
-            tok=args.tok,
-            inp=str(input_path),
-            out=str(output_path),
-            check_every=args.check_every,
+        encode_with_report(
+            Path(args.tok),
+            input_path,
+            output_path,
+            report_path,
+            args.check_every,
         )
-        with open(log_path, "w", encoding="utf-8", newline="\n") as report:
-            with redirect_stdout(Tee(sys.stdout, report)):
-                started_at = local_timestamp()
-                started_clock = time.perf_counter()
-                completed = False
-                print_header("URDU BPE CORPUS ENCODING")
-                print_section(f"INPUT: {input_path.name}")
-                print_field("Started at", started_at)
-                print_field("Input text", input_path.resolve())
-                print_field("Tokenizer", Path(args.tok).resolve())
-                print_field("Binary output", output_path.resolve())
-                print_field("Text report", log_path.resolve())
-                try:
-                    encode(file_args, log_path)
-                    completed = True
-                finally:
-                    finished_at = local_timestamp()
-                    elapsed = time.perf_counter() - started_clock
-                    print_section("RUN SUMMARY")
-                    print_field("Status", "Completed" if completed else "Failed")
-                    print_field("Finished at", finished_at)
-                    print_field("Elapsed time", format_duration(elapsed))
-    return 0
 
-
-def encode(args: argparse.Namespace, log_path: Path) -> int:
-    tokenizer = BPETokenizer.load(args.tok)
-    if len(tokenizer.vocab) > 65_536:
-        raise ValueError("token IDs do not fit in uint16")
-
-    output_path = Path(args.out)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = Path(str(output_path) + ".tmp")
-    token_buffer: list[int] = []
-    token_total = 0
-    special_total = 0
-    input_size = os.path.getsize(args.inp)
-
-    print_section("ENCODING PROGRESS")
-    with open_text(args.inp) as source, open(temporary_path, "wb") as output, tqdm(
-        total=input_size,
-        unit="B",
-        unit_scale=True,
-        dynamic_ncols=True,
-        bar_format=(
-            "{l_bar}{bar:30} | {n_fmt}/{total_fmt} "
-            "[{elapsed}<{remaining}, {rate_fmt}]"
-        ),
-    ) as progress:
-        for line_number, line in enumerate(source, start=1):
-            ids = tokenizer.encode(line)
-            if args.check_every and line_number % args.check_every == 0:
-                if tokenizer.decode(ids) != line:
-                    raise ValueError(f"round-trip failed on input line {line_number}")
-            special_total += line.count(SPECIAL)
-            token_buffer.extend(ids)
-            progress.update(len(line.encode("utf-8", errors="surrogatepass")))
-            if len(token_buffer) >= OUTPUT_BUFFER_TOKENS:
-                if token_buffer and max(token_buffer) >= len(tokenizer.vocab):
-                    raise ValueError("encoded token ID is outside the vocabulary")
-                np.asarray(token_buffer, dtype=np.uint16).tofile(output)
-                token_total += len(token_buffer)
-                token_buffer.clear()
-        if token_buffer:
-            if max(token_buffer) >= len(tokenizer.vocab):
-                raise ValueError("encoded token ID is outside the vocabulary")
-            np.asarray(token_buffer, dtype=np.uint16).tofile(output)
-            token_total += len(token_buffer)
-
-    verify_bin(tokenizer, temporary_path, args.inp, token_total, special_total)
-    os.replace(temporary_path, output_path)
-    print_section("ENCODING RESULTS")
-    print_field("Input file", args.inp)
-    print_field("Tokens written", f"{token_total:,}")
-    print_field("Binary file", output_path)
-    print_field("Text bytes per token", f"{input_size / max(token_total, 1):.3f}")
-    print_field("Encoding report", log_path)
     return 0
 
 

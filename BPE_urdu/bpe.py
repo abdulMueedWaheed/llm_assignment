@@ -1,30 +1,25 @@
-"""Byte-level BPE tokenizer for Urdu, implemented without tokenizer libraries."""
-
 import argparse
-import heapq
-import json
-import sys
-import time
 from collections import Counter
 from collections import defaultdict
 from contextlib import redirect_stdout
+import heapq
+import json
 from pathlib import Path
+import sys
+import time
 from typing import Callable, Iterable, Mapping
 
 import regex
 
-from output_utils import (
-    Tee,
-    print_field,
-    print_header,
-)
+from output_utils import Tee, show_title, show_value
 
-SPECIAL = "<|endoftext|>"
+
+SPECIAL_TEXT = "<|endoftext|>"
 SPECIAL_ID = 256
 FIRST_MERGE_ID = 257
-CACHE_MAX = 5_000_000
+CACHE_LIMIT = 5_000_000
 
-PATTERN = (
+URDU_WORD_PATTERN = (
     r"""'s|'t|'re|'ve|'m|'ll|'d"""
     r"""| ?[\p{L}\p{M}\u200c]+"""
     r"""| ?\p{N}+"""
@@ -34,27 +29,36 @@ PATTERN = (
 )
 
 
-def open_text(path: str | Path):
-    """Open UTF-8 text without translating stored line endings."""
+def open_text_file(path: str | Path):
     return open(path, "r", encoding="utf-8", newline="")
 
 
-def merge_ids(ids: list[int], pair: tuple[int, int], new_id: int) -> list[int]:
-    """Replace non-overlapping occurrences of a pair from left to right."""
-    left, right = pair
-    merged = []
-    index = 0
-    while index < len(ids):
-        if index + 1 < len(ids) and ids[index] == left and ids[index + 1] == right:
-            merged.append(new_id)
-            index += 2
+def merge_pair_left_to_right(
+    token_ids: list[int],
+    pair: tuple[int, int],
+    new_id: int,
+) -> list[int]:
+    left_id, right_id = pair
+    merged_ids = []
+    position = 0
+
+    while position < len(token_ids):
+        is_pair = (
+            position + 1 < len(token_ids)
+            and token_ids[position] == left_id
+            and token_ids[position + 1] == right_id
+        )
+        if is_pair:
+            merged_ids.append(new_id)
+            position += 2
         else:
-            merged.append(ids[index])
-            index += 1
-    return merged
+            merged_ids.append(token_ids[position])
+            position += 1
+
+    return merged_ids
 
 
-class _HeapEntry:
+class PairHeapEntry:
     __slots__ = ("count", "byte_key", "pair")
 
     def __init__(
@@ -62,12 +66,12 @@ class _HeapEntry:
         count: int,
         byte_key: tuple[bytes, bytes],
         pair: tuple[int, int],
-    ):
+    ) -> None:
         self.count = count
         self.byte_key = byte_key
         self.pair = pair
 
-    def __lt__(self, other: "_HeapEntry") -> bool:
+    def __lt__(self, other: "PairHeapEntry") -> bool:
         if self.count != other.count:
             return self.count > other.count
         if self.byte_key != other.byte_key:
@@ -75,57 +79,38 @@ class _HeapEntry:
         return self.pair > other.pair
 
 
-class BPETokenizer:
+class UrduBPETokenizer:
     def __init__(self) -> None:
-        self.pat = regex.compile(PATTERN)
+        self.word_pattern = regex.compile(URDU_WORD_PATTERN)
         self.merges: list[tuple[int, int]] = []
-        self.vocab = self._base_vocab()
-        self.inverse_vocab = {token: token_id for token_id, token in self.vocab.items()}
-        self.special_tokens = {SPECIAL: SPECIAL_ID}
-        self.rank: dict[tuple[int, int], int] = {}
-        self.cache: dict[bytes, list[int]] = {}
-        self.train_stats: dict[str, int] = {}
+        self.vocabulary = self.make_byte_vocabulary()
+        self.inverse_vocabulary = {
+            value: key for key, value in self.vocabulary.items()
+        }
+        self.merge_rank: dict[tuple[int, int], int] = {}
+        self.word_cache: dict[bytes, list[int]] = {}
+        self.training_stats: dict[str, int] = {}
 
     @staticmethod
-    def _base_vocab() -> dict[int, bytes]:
-        vocab = {token_id: bytes([token_id]) for token_id in range(256)}
-        vocab[SPECIAL_ID] = SPECIAL.encode("utf-8")
-        return vocab
+    def make_byte_vocabulary() -> dict[int, bytes]:
+        vocabulary = {index: bytes([index]) for index in range(256)}
+        vocabulary[SPECIAL_ID] = SPECIAL_TEXT.encode("utf-8")
+        return vocabulary
 
-    def _rebuild_from_merges(self) -> None:
-        self.vocab = self._base_vocab()
-        self.inverse_vocab = {}
-        for token_id, token in self.vocab.items():
-            self.inverse_vocab.setdefault(token, token_id)
-        self.rank = {}
-        for index, pair in enumerate(self.merges):
-            new_id = FIRST_MERGE_ID + index
-            left, right = pair
-            if SPECIAL_ID in pair:
-                raise ValueError("the special token must never be merged")
-            if left not in self.vocab or right not in self.vocab:
-                raise ValueError(
-                    f"merge {index + 1} uses a token ID that does not exist yet"
-                )
-            self.vocab[new_id] = self.vocab[left] + self.vocab[right]
-            self.inverse_vocab.setdefault(self.vocab[new_id], new_id)
-            self.rank[pair] = new_id
-        self.special_tokens = {SPECIAL: SPECIAL_ID}
-        self.cache.clear()
-
-    def iter_pieces(
+    def read_words(
         self,
         path: str | Path,
         max_bytes: int | None = None,
     ) -> Iterable[str]:
-        """Yield pre-tokens line by line; special-token text is excluded."""
         bytes_read = 0
-        with open_text(path) as source:
-            for line in source:
+        with open_text_file(path) as input_file:
+            for line in input_file:
                 bytes_read += len(line.encode("utf-8", errors="surrogatepass"))
-                for chunk in line.split(SPECIAL):
-                    for match in self.pat.finditer(chunk):
+
+                for text_part in line.split(SPECIAL_TEXT):
+                    for match in self.word_pattern.finditer(text_part):
                         yield match.group()
+
                 if max_bytes is not None and bytes_read >= max_bytes:
                     break
 
@@ -134,433 +119,432 @@ class BPETokenizer:
         path: str | Path,
         max_bytes: int | None = None,
     ) -> Counter[str]:
-        """Count distinct pre-tokens for the optimized trainer."""
-        return Counter(self.iter_pieces(path, max_bytes))
+        return Counter(self.read_words(path, max_bytes))
 
     def train_reference(
         self,
-        pieces: Iterable[str],
-        vocab_size: int = 50_000,
+        word_occurrences: Iterable[str],
+        vocabulary_size: int = 50_000,
         log_every: int = 1_000,
         log: Callable[[str], object] = print,
     ) -> list[tuple[int, int]]:
-        """Train the unoptimized reference model from every pre-token occurrence."""
-        if vocab_size <= FIRST_MERGE_ID or vocab_size > 65_536:
-            raise ValueError("vocab_size must be between 258 and 65,536")
-        if log_every < 0:
-            raise ValueError("log_every cannot be negative")
-
-        words = [
-            list(piece.encode("utf-8", errors="surrogatepass"))
-            for piece in pieces
+        self.check_training_settings(vocabulary_size, log_every)
+        running_words = [
+            list(word.encode("utf-8", errors="surrogatepass"))
+            for word in word_occurrences
         ]
-        self.train_stats = {
+        self.training_stats = {
             "distinct_total": 0,
             "distinct_used": 0,
-            "occurrences_total": len(words),
-            "occurrences_used": len(words),
+            "occurrences_total": len(running_words),
+            "occurrences_used": len(running_words),
             "min_freq": 1,
         }
-        self.merges = self._train_reference(
-            words, vocab_size - FIRST_MERGE_ID, log_every, log
-        )
-        self._rebuild_from_merges()
-        return self.merges
 
-    def train_from_counts(
-        self,
-        word_counts: Mapping[str, int],
-        vocab_size: int = 50_000,
-        min_freq: int = 1,
-        log_every: int = 1_000,
-        log: Callable[[str], object] = print,
-        checkpoint: Callable[[list[tuple[int, int]]], object] | None = None,
-        verify: bool = False,
-        heap_slack: int = 100_000,
-    ) -> list[tuple[int, int]]:
-        """Train the optimized model from distinct pre-token frequencies."""
-        if vocab_size <= FIRST_MERGE_ID:
-            raise ValueError(f"vocab_size must be greater than {FIRST_MERGE_ID}")
-        if min_freq < 1:
-            raise ValueError("min_freq must be at least 1")
-        if heap_slack < 0:
-            raise ValueError("heap_slack cannot be negative")
-        if vocab_size > 65_536:
-            raise ValueError("vocab_size must not exceed 65,536 for uint16 output")
-        if any(
-            not isinstance(count, int) or count < 1
-            for count in word_counts.values()
-        ):
-            raise ValueError("word frequencies must be positive integers")
+        byte_vocabulary = self.make_byte_vocabulary()
+        learned_merges = []
+        start_time = time.perf_counter()
+        merge_count = vocabulary_size - FIRST_MERGE_ID
 
-        total_occurrences = sum(word_counts.values())
-        kept = [
-            (word, count)
-            for word, count in word_counts.items()
-            if count >= min_freq
-        ]
-        kept_occurrences = sum(count for _, count in kept)
-        self.train_stats = {
-            "distinct_total": len(word_counts),
-            "distinct_used": len(kept),
-            "occurrences_total": total_occurrences,
-            "occurrences_used": kept_occurrences,
-            "min_freq": min_freq,
-        }
-        log(
-            f"words used: {len(kept):,} of {len(word_counts):,} distinct "
-            f"({100.0 * kept_occurrences / max(total_occurrences, 1):.3f}% "
-            f"of running pre-tokens, min_freq={min_freq})"
-        )
+        for merge_number in range(merge_count):
+            pair_counts: Counter[tuple[int, int]] = Counter()
 
-        words = [
-            list(word.encode("utf-8", errors="surrogatepass"))
-            for word, _ in kept
-        ]
-        frequencies = [frequency for _, frequency in kept]
-        del kept
-        merges = self._train_fast(
-            words,
-            frequencies,
-            vocab_size - FIRST_MERGE_ID,
-            log_every,
-            log,
-            checkpoint,
-            verify,
-            heap_slack,
-        )
-        self.merges = merges
-        self._rebuild_from_merges()
-        return merges
+            for word in running_words:
+                pair_counts.update(zip(word, word[1:]))
 
-    def _train_reference(
-        self,
-        words: list[list[int]],
-        num_merges: int,
-        log_every: int,
-        log: Callable[[str], object],
-    ) -> list[tuple[int, int]]:
-        """Naive baseline: recount every pair in every running word per merge."""
-        vocab = self._base_vocab()
-        merges = []
-        started = time.perf_counter()
-
-        for index in range(num_merges):
-            counts: Counter[tuple[int, int]] = Counter()
-            for word in words:
-                counts.update(zip(word, word[1:]))
-            if not counts:
+            if not pair_counts:
                 break
 
-            best = max(
-                counts,
+            best_pair = max(
+                pair_counts,
                 key=lambda pair: (
-                    counts[pair],
-                    (vocab[pair[0]], vocab[pair[1]]),
+                    pair_counts[pair],
+                    byte_vocabulary[pair[0]],
+                    byte_vocabulary[pair[1]],
                     pair,
                 ),
             )
-            new_id = FIRST_MERGE_ID + index
-            words = [merge_ids(word, best, new_id) for word in words]
-            vocab[new_id] = vocab[best[0]] + vocab[best[1]]
-            merges.append(best)
+            new_id = FIRST_MERGE_ID + merge_number
+            running_words = [
+                merge_pair_left_to_right(word, best_pair, new_id)
+                for word in running_words
+            ]
+            byte_vocabulary[new_id] = (
+                byte_vocabulary[best_pair[0]] + byte_vocabulary[best_pair[1]]
+            )
+            learned_merges.append(best_pair)
 
-            if log_every and (index + 1) % log_every == 0:
+            if log_every and (merge_number + 1) % log_every == 0:
+                elapsed = time.perf_counter() - start_time
                 log(
-                    f"[reference] {index + 1:>6,}/{num_merges:,} merges | "
-                    f"pair count: {counts[best]:,} | elapsed: "
-                    f"{time.perf_counter() - started:.0f}s | "
-                    f"merged bytes: {vocab[new_id]!r}"
+                    f"[reference] {merge_number + 1:,}/{merge_count:,} merges"
+                    f" | best pair count: {pair_counts[best_pair]:,}"
+                    f" | elapsed: {elapsed:.0f}s"
                 )
-        return merges
 
-    def _train_fast(
+        self.merges = learned_merges
+        self.rebuild_vocabulary()
+        return self.merges
+
+    def train_fast(
         self,
-        words: list[list[int]],
+        word_frequencies: Mapping[str, int],
+        vocabulary_size: int = 50_000,
+        min_frequency: int = 1,
+        log_every: int = 1_000,
+        log: Callable[[str], object] = print,
+        checkpoint: Callable[[list[tuple[int, int]]], object] | None = None,
+        verify_counts: bool = False,
+    ) -> list[tuple[int, int]]:
+        self.check_training_settings(vocabulary_size, log_every)
+        if min_frequency < 1:
+            raise ValueError("minimum frequency must be at least 1")
+        if any(
+            not isinstance(count, int) or count < 1
+            for count in word_frequencies.values()
+        ):
+            raise ValueError("word frequencies must be positive integers")
+
+        total_occurrences = sum(word_frequencies.values())
+        used_words = [
+            (word, count)
+            for word, count in word_frequencies.items()
+            if count >= min_frequency
+        ]
+        used_occurrences = sum(count for _, count in used_words)
+        self.training_stats = {
+            "distinct_total": len(word_frequencies),
+            "distinct_used": len(used_words),
+            "occurrences_total": total_occurrences,
+            "occurrences_used": used_occurrences,
+            "min_freq": min_frequency,
+        }
+        log(
+            f"Words kept: {len(used_words):,}/{len(word_frequencies):,} distinct"
+            f" ({100 * used_occurrences / max(total_occurrences, 1):.2f}%"
+            " of occurrences)"
+        )
+
+        running_words = [
+            list(word.encode("utf-8", errors="surrogatepass"))
+            for word, _ in used_words
+        ]
+        frequencies = [count for _, count in used_words]
+        del used_words
+
+        learned_merges = self.learn_fast_merges(
+            running_words,
+            frequencies,
+            vocabulary_size - FIRST_MERGE_ID,
+            log_every,
+            log,
+            checkpoint,
+            verify_counts,
+        )
+        self.merges = learned_merges
+        self.rebuild_vocabulary()
+        return self.merges
+
+    @staticmethod
+    def check_training_settings(vocabulary_size: int, log_every: int) -> None:
+        if vocabulary_size <= FIRST_MERGE_ID or vocabulary_size > 65_536:
+            raise ValueError("vocabulary size must be between 258 and 65,536")
+        if log_every < 0:
+            raise ValueError("log interval cannot be negative")
+
+    def learn_fast_merges(
+        self,
+        running_words: list[list[int]],
         frequencies: list[int],
-        num_merges: int,
+        merge_count: int,
         log_every: int,
         log: Callable[[str], object],
         checkpoint: Callable[[list[tuple[int, int]]], object] | None,
-        verify: bool,
-        heap_slack: int,
+        verify_counts: bool,
     ) -> list[tuple[int, int]]:
-        """Incremental weighted trainer with a pair index and lazy heap."""
-        vocab = self._base_vocab()
-        merges: list[tuple[int, int]] = []
-        started = time.perf_counter()
         pair_counts: defaultdict[tuple[int, int], int] = defaultdict(int)
-        pair_words: defaultdict[tuple[int, int], set[int]] = defaultdict(set)
+        pair_to_words: defaultdict[tuple[int, int], set[int]] = defaultdict(set)
 
-        for word_id, word in enumerate(words):
-            frequency = frequencies[word_id]
+        for word_id, word in enumerate(running_words):
             for pair in zip(word, word[1:]):
-                pair_counts[pair] += frequency
-                pair_words[pair].add(word_id)
+                pair_counts[pair] += frequencies[word_id]
+                pair_to_words[pair].add(word_id)
 
-        def make_entry(pair: tuple[int, int], count: int) -> _HeapEntry:
-            return _HeapEntry(count, (vocab[pair[0]], vocab[pair[1]]), pair)
+        byte_vocabulary = self.make_byte_vocabulary()
+        learned_merges = []
+        start_time = time.perf_counter()
+
+        def make_entry(pair: tuple[int, int], count: int) -> PairHeapEntry:
+            return PairHeapEntry(
+                count,
+                (byte_vocabulary[pair[0]], byte_vocabulary[pair[1]]),
+                pair,
+            )
 
         heap = [make_entry(pair, count) for pair, count in pair_counts.items()]
         heapq.heapify(heap)
 
-        for index in range(num_merges):
-            best = None
+        for merge_number in range(merge_count):
+            best_pair = None
             best_count = 0
             while heap:
                 entry = heapq.heappop(heap)
-                actual = pair_counts.get(entry.pair, 0)
-                if actual == entry.count and actual > 0:
-                    best, best_count = entry.pair, actual
+                actual_count = pair_counts.get(entry.pair, 0)
+                if actual_count == entry.count and actual_count > 0:
+                    best_pair = entry.pair
+                    best_count = actual_count
                     break
-                if 0 < actual < entry.count:
-                    heapq.heappush(heap, make_entry(entry.pair, actual))
-            if best is None:
+                if 0 < actual_count < entry.count:
+                    heapq.heappush(heap, make_entry(entry.pair, actual_count))
+
+            if best_pair is None:
                 break
 
-            new_id = FIRST_MERGE_ID + index
-            vocab[new_id] = vocab[best[0]] + vocab[best[1]]
-            merges.append(best)
-            changed: set[tuple[int, int]] = set()
+            new_id = FIRST_MERGE_ID + merge_number
+            byte_vocabulary[new_id] = (
+                byte_vocabulary[best_pair[0]] + byte_vocabulary[best_pair[1]]
+            )
+            learned_merges.append(best_pair)
+            changed_pairs: set[tuple[int, int]] = set()
             previous_counts: dict[tuple[int, int], int] = {}
+            affected_word_ids = list(pair_to_words[best_pair])
 
-            for word_id in list(pair_words.get(best, ())):
-                word = words[word_id]
-                merged_word = merge_ids(word, best, new_id)
-                if len(merged_word) == len(word):
-                    continue
+            for word_id in affected_word_ids:
+                old_word = running_words[word_id]
+                new_word = merge_pair_left_to_right(old_word, best_pair, new_id)
 
-                delta: dict[tuple[int, int], int] = {}
-                for pair in zip(word, word[1:]):
-                    delta[pair] = delta.get(pair, 0) - 1
-                new_pairs = list(zip(merged_word, merged_word[1:]))
-                for pair in new_pairs:
-                    delta[pair] = delta.get(pair, 0) + 1
-                new_pair_set = set(new_pairs)
-                frequency = frequencies[word_id]
+                old_counts = Counter(zip(old_word, old_word[1:]))
+                new_counts = Counter(zip(new_word, new_word[1:]))
+                all_changed_pairs = set(old_counts) | set(new_counts)
 
-                for pair, difference in delta.items():
+                for pair in all_changed_pairs:
+                    difference = new_counts[pair] - old_counts[pair]
                     if difference == 0:
                         continue
-                    previous_counts.setdefault(pair, pair_counts.get(pair, 0))
-                    pair_counts[pair] += difference * frequency
-                    changed.add(pair)
-                    if pair == best:
-                        continue
-                    if difference > 0:
-                        pair_words[pair].add(word_id)
-                    elif pair not in new_pair_set:
-                        pair_words[pair].discard(word_id)
-                words[word_id] = merged_word
 
-            pair_words.pop(best, None)
-            for pair in changed:
-                count = pair_counts.get(pair, 0)
+                    previous_counts.setdefault(pair, pair_counts.get(pair, 0))
+                    pair_counts[pair] += difference * frequencies[word_id]
+                    changed_pairs.add(pair)
+
+                    if new_counts[pair]:
+                        pair_to_words[pair].add(word_id)
+                    else:
+                        pair_to_words[pair].discard(word_id)
+
+                running_words[word_id] = new_word
+
+            for pair in changed_pairs:
+                count = pair_counts[pair]
                 if count <= 0:
                     pair_counts.pop(pair, None)
-                    pair_words.pop(pair, None)
+                    pair_to_words.pop(pair, None)
                 elif count > previous_counts[pair]:
                     heapq.heappush(heap, make_entry(pair, count))
 
-            if len(heap) > 3 * len(pair_counts) + heap_slack:
+            if len(heap) > 3 * len(pair_counts) + 100_000:
                 heap = [make_entry(pair, count) for pair, count in pair_counts.items()]
                 heapq.heapify(heap)
 
-            if verify:
-                self._verify_state(words, frequencies, pair_counts, pair_words)
-
-            if log_every and (index + 1) % log_every == 0:
-                elapsed = time.perf_counter() - started
-                remaining = elapsed * (num_merges - index - 1) / (index + 1)
-                log(
-                    f"[fast]      {index + 1:>6,}/{num_merges:,} merges | "
-                    f"pair count: {best_count:,} | pairs: {len(pair_counts):,} | "
-                    f"heap: {len(heap):,} | elapsed: {elapsed:.0f}s | "
-                    f"ETA: {remaining / 3600:.2f}h | "
-                    f"merged bytes: {vocab[new_id]!r}"
+            if verify_counts:
+                self.check_pair_indexes(
+                    running_words,
+                    frequencies,
+                    pair_counts,
+                    pair_to_words,
                 )
+
+            if log_every and (merge_number + 1) % log_every == 0:
+                elapsed = time.perf_counter() - start_time
+                remaining = elapsed * (merge_count - merge_number - 1)
+                remaining /= merge_number + 1
+                log(
+                    f"[fast] {merge_number + 1:,}/{merge_count:,} merges"
+                    f" | best pair count: {best_count:,}"
+                    f" | pairs: {len(pair_counts):,}"
+                    f" | heap: {len(heap):,}"
+                    f" | elapsed: {elapsed:.0f}s"
+                    f" | estimated remaining: {remaining / 3600:.2f}h"
+                )
+
             if checkpoint is not None:
-                checkpoint(merges)
-        return merges
+                checkpoint(learned_merges)
+
+        return learned_merges
 
     @staticmethod
-    def _verify_state(
+    def check_pair_indexes(
         words: list[list[int]],
         frequencies: list[int],
         pair_counts: Mapping[tuple[int, int], int],
-        pair_words: Mapping[tuple[int, int], set[int]],
+        pair_to_words: Mapping[tuple[int, int], set[int]],
     ) -> None:
-        """Rebuild indexes and assert that the incremental state is exact."""
-        counts: defaultdict[tuple[int, int], int] = defaultdict(int)
-        locations: defaultdict[tuple[int, int], set[int]] = defaultdict(set)
+        fresh_counts: defaultdict[tuple[int, int], int] = defaultdict(int)
+        fresh_word_index: defaultdict[tuple[int, int], set[int]] = defaultdict(set)
+
         for word_id, word in enumerate(words):
             for pair in zip(word, word[1:]):
-                counts[pair] += frequencies[word_id]
-                locations[pair].add(word_id)
-        assert {
-            pair: count
-            for pair, count in pair_counts.items()
-            if count
-        } == dict(counts)
-        assert {pair: ids for pair, ids in pair_words.items() if ids} == dict(locations)
+                fresh_counts[pair] += frequencies[word_id]
+                fresh_word_index[pair].add(word_id)
 
-    def _bpe_word(self, word_bytes: bytes) -> list[int]:
-        """Apply learned merges in rank order to one pre-token."""
-        ids = list(word_bytes)
-        while len(ids) >= 2:
-            best_pair = None
-            best_rank = None
-            for pair in zip(ids, ids[1:]):
-                rank = self.rank.get(pair)
-                if rank is not None and (best_rank is None or rank < best_rank):
-                    best_pair, best_rank = pair, rank
-            if best_pair is None or best_rank is None:
+        assert dict(pair_counts) == dict(fresh_counts)
+        assert dict(pair_to_words) == dict(fresh_word_index)
+
+    def rebuild_vocabulary(self) -> None:
+        self.vocabulary = self.make_byte_vocabulary()
+        self.inverse_vocabulary = {}
+        for token_id, token_bytes in self.vocabulary.items():
+            self.inverse_vocabulary.setdefault(token_bytes, token_id)
+
+        self.merge_rank = {}
+        for merge_number, pair in enumerate(self.merges):
+            new_id = FIRST_MERGE_ID + merge_number
+            left_id, right_id = pair
+            if SPECIAL_ID in pair:
+                raise ValueError("the special token cannot be merged")
+            if left_id not in self.vocabulary or right_id not in self.vocabulary:
+                raise ValueError(f"merge {merge_number + 1} uses an unknown token")
+
+            merged_bytes = self.vocabulary[left_id] + self.vocabulary[right_id]
+            self.vocabulary[new_id] = merged_bytes
+            self.inverse_vocabulary.setdefault(merged_bytes, new_id)
+            self.merge_rank[pair] = new_id
+
+        self.word_cache.clear()
+
+    def encode_word(self, word_bytes: bytes) -> list[int]:
+        token_ids = list(word_bytes)
+
+        while len(token_ids) > 1:
+            available_pairs = [
+                pair for pair in zip(token_ids, token_ids[1:])
+                if pair in self.merge_rank
+            ]
+            if not available_pairs:
                 break
-            ids = merge_ids(ids, best_pair, best_rank)
-        return ids
+            best_pair = min(available_pairs, key=self.merge_rank.get)
+            token_ids = merge_pair_left_to_right(
+                token_ids,
+                best_pair,
+                self.merge_rank[best_pair],
+            )
 
-    def _encode_chunk(self, text: str) -> list[int]:
-        """Encode text that does not contain the reserved special-token string."""
-        ids = []
-        for match in self.pat.finditer(text):
-            word_bytes = match.group().encode("utf-8", errors="surrogatepass")
-            tokens = self.cache.get(word_bytes)
-            if tokens is None:
-                tokens = self._bpe_word(word_bytes)
-                if len(self.cache) < CACHE_MAX:
-                    self.cache[word_bytes] = tokens
-            ids.extend(tokens)
-        return ids
+        return token_ids
+
+    def encode_text_part(self, text: str) -> list[int]:
+        token_ids = []
+        for match in self.word_pattern.finditer(text):
+            word_bytes = match.group().encode(
+                "utf-8",
+                errors="surrogatepass",
+            )
+            cached_ids = self.word_cache.get(word_bytes)
+
+            if cached_ids is None:
+                cached_ids = self.encode_word(word_bytes)
+                if len(self.word_cache) < CACHE_LIMIT:
+                    self.word_cache[word_bytes] = cached_ids
+
+            token_ids.extend(cached_ids)
+
+        return token_ids
 
     def encode(self, text: str) -> list[int]:
-        """Encode text; each literal special-token string maps to ID 256."""
-        if not text:
-            return []
-        ids = []
-        for index, chunk in enumerate(text.split(SPECIAL)):
-            if index:
-                ids.append(SPECIAL_ID)
-            if chunk:
-                ids.extend(self._encode_chunk(chunk))
-        return ids
+        token_ids = []
+        text_parts = text.split(SPECIAL_TEXT)
+        for part_number, text_part in enumerate(text_parts):
+            if part_number:
+                token_ids.append(SPECIAL_ID)
+            if text_part:
+                token_ids.extend(self.encode_text_part(text_part))
+        return token_ids
 
-    def decode(self, ids: Iterable[int]) -> str:
-        """Decode token IDs, preserving valid UTF-8 and surrogate-pass text."""
-        data = b"".join(self.vocab[token_id] for token_id in ids)
+    def decode(self, token_ids: Iterable[int]) -> str:
+        token_bytes = b"".join(self.vocabulary[token_id] for token_id in token_ids)
         try:
-            return data.decode("utf-8", errors="surrogatepass")
+            return token_bytes.decode("utf-8", errors="surrogatepass")
         except UnicodeDecodeError:
-            return data.decode("utf-8", errors="replace")
+            return token_bytes.decode("utf-8", errors="replace")
 
-    def save(
-        self,
-        path: str | Path,
-        merges: list[tuple[int, int]] | None = None,
-    ) -> None:
-        """Save learned merges and metadata as JSON."""
-        saved_merges = self.merges if merges is None else merges
-        payload = {
+    def save(self, path: str | Path) -> None:
+        data = {
             "version": 2,
-            "vocab_size": FIRST_MERGE_ID + len(saved_merges),
-            "num_merges": len(saved_merges),
-            "pattern": PATTERN,
-            "special_tokens": {SPECIAL: SPECIAL_ID},
-            "train_stats": self.train_stats,
-            "merges": [[left, right] for left, right in saved_merges],
+            "vocab_size": FIRST_MERGE_ID + len(self.merges),
+            "num_merges": len(self.merges),
+            "pattern": URDU_WORD_PATTERN,
+            "special_tokens": {SPECIAL_TEXT: SPECIAL_ID},
+            "train_stats": self.training_stats,
+            "merges": [[left, right] for left, right in self.merges],
         }
-        with open(path, "w", encoding="utf-8", newline="\n") as output:
-            json.dump(payload, output, ensure_ascii=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as output_file:
+            json.dump(data, output_file, ensure_ascii=True)
 
     @classmethod
-    def load(cls, path: str | Path) -> "BPETokenizer":
-        with open(path, "r", encoding="utf-8") as source:
-            payload = json.load(source)
-        if payload.get("special_tokens") != {SPECIAL: SPECIAL_ID}:
-            raise ValueError("tokenizer file has an invalid special-token mapping")
+    def load(cls, path: str | Path) -> "UrduBPETokenizer":
+        with open(path, "r", encoding="utf-8") as input_file:
+            data = json.load(input_file)
+
+        if data.get("special_tokens") != {SPECIAL_TEXT: SPECIAL_ID}:
+            raise ValueError("tokenizer has an invalid special-token mapping")
+
         tokenizer = cls()
-        tokenizer.pat = regex.compile(payload["pattern"])
-        tokenizer.merges = [tuple(pair) for pair in payload["merges"]]
+        tokenizer.word_pattern = regex.compile(data["pattern"])
+        tokenizer.merges = [tuple(pair) for pair in data["merges"]]
+
         expected_size = FIRST_MERGE_ID + len(tokenizer.merges)
-        if payload.get("vocab_size") != expected_size:
-            raise ValueError("tokenizer file is inconsistent (vocab_size vs merges)")
-        if payload.get("num_merges", len(tokenizer.merges)) != len(tokenizer.merges):
-            raise ValueError("tokenizer file is inconsistent (num_merges vs merges)")
-        tokenizer.train_stats = payload.get("train_stats", {})
-        tokenizer._rebuild_from_merges()
+        if data.get("vocab_size") != expected_size:
+            raise ValueError("tokenizer vocabulary size does not match its merges")
+        if data.get("num_merges", len(tokenizer.merges)) != len(tokenizer.merges):
+            raise ValueError("tokenizer merge count does not match its merge list")
+
+        tokenizer.training_stats = data.get("train_stats", {})
+        tokenizer.rebuild_vocabulary()
         return tokenizer
 
-    def token_text(self, token_id: int) -> str:
-        return self.vocab[token_id].decode("utf-8", errors="replace")
 
-    def token_is_valid_utf8(self, token_id: int) -> bool:
-        try:
-            self.vocab[token_id].decode("utf-8")
-            return True
-        except UnicodeDecodeError:
-            return False
-
-    def token_char_len(self, token_id: int) -> int | None:
-        try:
-            return len(self.vocab[token_id].decode("utf-8"))
-        except UnicodeDecodeError:
-            return None
-
-
-def _run_builtin_test(report_path: Path) -> None:
+def run_builtin_test(report_path: Path) -> None:
     sample = (
         "اردو زبان کا نمونہ ہے۔ یہ ایک سادہ ٹیسٹ ہے۔ "
         "BPE متن کو ٹوکنز میں تقسیم کرتا ہے۔\n"
     ) * 20
-    tokenizer = BPETokenizer()
-    pieces = [
-        match.group()
-        for match in tokenizer.pat.finditer(sample)
-    ]
-    counts = Counter(pieces)
-    vocab_size = FIRST_MERGE_ID + 100
+    tokenizer = UrduBPETokenizer()
+    words = list(tokenizer.word_pattern.finditer(sample))
+    word_pieces = [match.group() for match in words]
+    vocabulary_size = FIRST_MERGE_ID + 100
 
-    reference = BPETokenizer()
-    reference.train_reference(pieces, vocab_size=vocab_size, log_every=0)
-    fast = BPETokenizer()
-    fast.train_from_counts(
-        counts,
-        vocab_size=vocab_size,
+    reference = UrduBPETokenizer()
+    reference.train_reference(word_pieces, vocabulary_size, log_every=0)
+    fast = UrduBPETokenizer()
+    fast.train_fast(
+        Counter(word_pieces),
+        vocabulary_size,
         log_every=0,
         log=lambda _: None,
     )
 
     if reference.merges != fast.merges:
-        raise AssertionError("reference and fast merges differ")
+        raise AssertionError("reference and fast merge lists differ")
     if fast.decode(fast.encode(sample)) != sample:
-        raise AssertionError("sample failed the encode/decode round trip")
+        raise AssertionError("text did not survive the encode/decode check")
 
-    print_header("BPE BUILT-IN TEST")
-    print_field("Result", "PASSED")
-    print_field("Sample characters", f"{len(sample):,}")
-    print_field("Pre-token count", f"{len(pieces):,}")
-    print_field("Distinct pre-tokens", f"{len(counts):,}")
-    print_field("Merges compared", f"{len(fast.merges):,}")
-    print_field("Reference == fast", "Yes")
-    print_field("Encode/decode", "Exact round trip")
-    print_field("Report saved to", report_path)
+    show_title("BPE BUILT-IN TEST")
+    show_value("Result", "Passed")
+    show_value("Merges compared", len(fast.merges))
+    show_value("Reference matches fast", "Yes")
+    show_value("Encode/decode", "Exact")
+    show_value("Report file", report_path)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the built-in BPE test.")
-    parser.add_argument(
-        "--report",
-        default=str(
-            Path(__file__).resolve().parent / "outputs" / "bpe_py_test_results.txt"
-        ),
-        help="test report path",
-    )
+    default_report = Path(__file__).resolve().parent / "outputs" / "bpe_test.txt"
+    parser.add_argument("--report", default=str(default_report))
     args = parser.parse_args()
 
     report_path = Path(args.report)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     with open(report_path, "w", encoding="utf-8", newline="\n") as report:
         with redirect_stdout(Tee(sys.stdout, report)):
-            _run_builtin_test(report_path)
+            run_builtin_test(report_path)
     return 0
 
 

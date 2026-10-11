@@ -12,24 +12,23 @@ import re
 import hashlib
 import random
 from datetime import datetime
+from pathlib import Path
 
 # Import local normalizer
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from normalize import normalize
 
-# Input paths on Google Drive
-DATA_DIR = r"G:\My Drive\LLM-Project\data"
-HUMSUB_PATH = os.path.join(DATA_DIR, r"raw\scraped\humsub_raw.txt")
-WIKI_PATH = os.path.join(DATA_DIR, r"raw\wikipedia\wikipedia_raw.txt")
-CC100_PATH = os.path.join(DATA_DIR, r"raw\cc100\ur.txt")
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+HUMSUB_PATH = DATA_DIR / "raw" / "scraped" / "humsub_raw.txt"
+WIKI_PATH = DATA_DIR / "raw" / "wikipedia" / "wikipedia_raw.txt"
+CC100_PATH = DATA_DIR / "raw" / "cc100" / "ur.txt"
 
-# Output directory for processed splits
-OUTPUT_DIR = os.path.join(DATA_DIR, "processed")
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+OUTPUT_DIR = DATA_DIR / "processed"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-TRAIN_PATH = os.path.join(OUTPUT_DIR, "train.txt")
-VAL_PATH = os.path.join(OUTPUT_DIR, "val.txt")
-TEST_PATH = os.path.join(OUTPUT_DIR, "test.txt")
+TRAIN_PATH = OUTPUT_DIR / "train.txt"
+VAL_PATH = OUTPUT_DIR / "val.txt"
+TEST_PATH = OUTPUT_DIR / "test.txt"
 
 # Target 1.5 GB for CC-100 slice
 CC100_TARGET_BYTES = int(1.5 * 1024 * 1024 * 1024)

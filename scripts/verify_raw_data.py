@@ -5,16 +5,17 @@ Verifies raw datasets for UTF-8 integrity, byte sizes, and readable Urdu samples
 
 import os
 import json
+from pathlib import Path
 
-DATA_DIR = r"G:\My Drive\LLM-Project\data\raw"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 
 SOURCES = {
-    "HumSub (Scraped - Blogs/Literature)": os.path.join(DATA_DIR, r"scraped\humsub_raw.txt"),
-    "Urdu Wikipedia (Encyclopedia)":       os.path.join(DATA_DIR, r"wikipedia\wikipedia_raw.txt"),
-    "CC-100 (Web Crawl)":                  os.path.join(DATA_DIR, r"cc100\ur.txt"),
+    "HumSub (Scraped - Blogs/Literature)": DATA_DIR / "scraped" / "humsub_raw.txt",
+    "Urdu Wikipedia (Encyclopedia)": DATA_DIR / "wikipedia" / "wikipedia_raw.txt",
+    "CC-100 (Web Crawl)": DATA_DIR / "cc100" / "ur.txt",
 }
 
-LOG_FILE = os.path.join(DATA_DIR, r"scraped\scrape_log.json")
+LOG_FILE = DATA_DIR / "scraped" / "scrape_log.json"
 
 print("=" * 70)
 print("            RAW DATASET VERIFICATION REPORT")

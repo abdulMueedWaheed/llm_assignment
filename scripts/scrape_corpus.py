@@ -7,23 +7,24 @@ Saves raw text and logs metadata (URL, bytes, timestamp) as evidence for Part A.
 import os
 import json
 import time
+from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 
-TARGET_DIR = r"G:\My Drive\LLM-Project\data\raw\scraped"
-OUTPUT_FILE = os.path.join(TARGET_DIR, "humsub_raw.txt")
-LOG_FILE = os.path.join(TARGET_DIR, "scrape_log.json")
+TARGET_DIR = Path(__file__).resolve().parent.parent / "data" / "raw" / "scraped"
+OUTPUT_FILE = TARGET_DIR / "humsub_raw.txt"
+LOG_FILE = TARGET_DIR / "scrape_log.json"
 TARGET_BYTES = 52 * 1024 * 1024  # Target ~52 MB to comfortably exceed 50 MB threshold
 
-os.makedirs(TARGET_DIR, exist_ok=True)
+TARGET_DIR.mkdir(parents=True, exist_ok=True)
 
 API_URL = "https://www.humsub.com.pk/wp-json/wp/v2/posts"
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) StudentProject/1.0"
+    "User-Agent": "Mozilla/5.0 (compatible; UrduCorpusResearch/1.0)"
 }
 
-audit_log = []
+audit_log: list[dict[str, object]] = []
 total_bytes = os.path.getsize(OUTPUT_FILE) if os.path.exists(OUTPUT_FILE) else 0
 page = 1
 

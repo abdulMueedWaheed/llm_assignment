@@ -21,10 +21,6 @@ DEFAULT_DRIVE_FOLDER_URL = (
 
 
 def get_default_dest_dir() -> Path:
-    """
-    Returns the local path to store processed data:
-    c:/.../llm_assignment/data/processed
-    """
     script_dir = Path(__file__).resolve().parent
     return script_dir.parent / "data" / "processed"
 
