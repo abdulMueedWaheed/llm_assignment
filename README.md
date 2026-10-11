@@ -121,14 +121,17 @@ and `bin_outputs\val.bin`.
 
 ```powershell
 python train_tokenizer.py
-python encode_corpus.py --tok outputs\tokenizer.json --inp ..\data\processed\train.txt
-python encode_corpus.py --tok outputs\tokenizer.json --inp ..\data\processed\val.txt
+python encode_corpus.py
 ```
 
 With no arguments, `train_tokenizer.py` uses the project
 `data\processed\train.txt`, writes the tokenizer to `outputs\tokenizer.json`,
 and writes its log to `outputs\train_tokenizer_log.txt`. Pass `--train` to
-select a different training file.
+select a different training file. With no arguments, `encode_corpus.py` loads
+that tokenizer, encodes both `train.txt` and `val.txt`, and writes
+`bin_outputs\train.bin` and `bin_outputs\val.bin` plus a separate report for
+each split in `outputs\`. Each encoding report records the local start time,
+finish time, and elapsed duration. Use `--inp` to encode only one input file.
 
 Training uses `train.txt` only. Keep `--min-freq 1` to use all pre-tokens;
 raising it changes the training distribution and must be disclosed in the report.

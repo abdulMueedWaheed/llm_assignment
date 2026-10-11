@@ -1,18 +1,18 @@
 """Tests for the Urdu byte-level BPE tokenizer."""
 
 import argparse
-from contextlib import redirect_stdout
 import os
 import random
 import sys
 import tempfile
 import time
 from collections import Counter
+from contextlib import redirect_stdout
 from pathlib import Path
 
 import regex
 
-from output_utils import Tee
+from output_utils import Tee, print_field, print_header, print_section
 from bpe import (
     BPETokenizer,
     FIRST_MERGE_ID,
@@ -45,7 +45,7 @@ def test_sanity() -> None:
         ]
         assert tokenizer.special_tokens == {SPECIAL: SPECIAL_ID}
         assert tokenizer.inverse_vocab[b"aa"] == 257
-    print("sanity OK")
+    print("Sanity example passed.")
 
 
 def test_pattern() -> None:
@@ -64,7 +64,7 @@ def test_pattern() -> None:
     ]
     for sample in samples:
         assert "".join(pattern.findall(sample)) == sample, repr(sample)
-    print("pattern OK")
+    print("Urdu and mixed-text pre-tokenization passed.")
 
 
 def _samples() -> list[str]:
@@ -118,11 +118,14 @@ def test_lossless(tokenizer: BPETokenizer, label: str) -> None:
     for _ in range(3_000):
         sample = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 40)))
         assert tokenizer.decode(tokenizer.encode(sample)) == sample, repr(sample)
-    print(f"lossless OK {label}")
+    print(f"Lossless encode/decode passed: {label}.")
 
 
 def _random_counts(rng: random.Random) -> Counter[str]:
-    alphabet = [chr(codepoint) for codepoint in range(0x627, 0x640)] + ["a", "b", "\u064e"]
+    alphabet = (
+        [chr(codepoint) for codepoint in range(0x627, 0x640)]
+        + ["a", "b", "\u064e"]
+    )
     counts: Counter[str] = Counter()
     for _ in range(rng.randint(5, 60)):
         word = "".join(
@@ -157,9 +160,11 @@ def test_random_equivalence(cases: int = 150) -> None:
             verify=True,
             heap_slack=0,
         )
-        assert reference.merges == fast.merges, f"random corpus {case_number}: merge mismatch"
+        assert reference.merges == fast.merges, (
+            f"random corpus {case_number}: merge mismatch"
+        )
         merges_checked += len(reference.merges)
-    print(f"random equivalence OK: {cases} corpora, {merges_checked:,} merges")
+    print(f"Random equivalence passed: {cases} corpora, {merges_checked:,} merges.")
 
 
 def test_save_load() -> None:
@@ -183,7 +188,7 @@ def test_save_load() -> None:
     for sample in _samples():
         assert loaded.encode(sample) == tokenizer.encode(sample)
     assert tokenizer.decode(tokenizer.encode("نایاب")) == "نایاب"
-    print("save/load and min_freq OK")
+    print("Tokenizer save/load and frequency filtering passed.")
 
 
 def make_sample(path: str, nbytes: int = 1_000_000) -> tuple[list[str], int]:
@@ -206,10 +211,10 @@ def test_sample_equivalence(train_path: str, merge_count: str) -> None:
             sample_file.writelines(lines)
         pieces = list(BPETokenizer().iter_pieces(sample_path))
         counts = Counter(pieces)
-    print(
-        f"sample: {byte_count / 1_000_000:.2f} MB, {len(counts):,} distinct, "
-        f"{sum(counts.values()):,} pre-token occurrences"
-    )
+    print_section("ONE-MEGABYTE SAMPLE")
+    print_field("Sample size", f"{byte_count / 1_000_000:.2f} MB")
+    print_field("Distinct pre-tokens", f"{len(counts):,}")
+    print_field("Pre-token occurrences", f"{sum(counts.values()):,}")
 
     requested_merges = 49_743 if merge_count == "full" else int(merge_count)
     if requested_merges < 1:
@@ -228,24 +233,24 @@ def test_sample_equivalence(train_path: str, merge_count: str) -> None:
     )
     fast_finished = time.perf_counter()
 
-    print(
-        f"reference: {reference_finished - started:.1f}s; "
-        f"fast: {fast_finished - reference_finished:.1f}s; "
-        f"requested merges: {requested_merges:,}"
-    )
-    print(
-        f"merges learned: fast={len(fast.merges):,}; "
-        f"reference={len(reference.merges):,}"
-    )
     assert reference.merges == fast.merges, "reference and fast merge lists differ"
     assert reference.vocab == fast.vocab
-    print(f"reference == fast for all {len(fast.merges):,} tested merges")
+    print_section("REFERENCE / FAST COMPARISON")
+    print_field("Reference time", f"{reference_finished - started:.1f}s")
+    print_field("Fast time", f"{fast_finished - reference_finished:.1f}s")
+    print_field("Requested merges", f"{requested_merges:,}")
+    print_field("Reference merges", f"{len(reference.merges):,}")
+    print_field("Fast merges", f"{len(fast.merges):,}")
+    print_field("Merge lists match", f"Yes ({len(fast.merges):,} merges)")
     test_lossless(fast, "trained on the 1 MB sample")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--train", help="train.txt used to create the 1 MB comparison sample")
+    parser.add_argument(
+        "--train",
+        help="train.txt used to create the 1 MB comparison sample",
+    )
     parser.add_argument(
         "--ref-merges",
         default="2000",
@@ -264,6 +269,7 @@ def main() -> None:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     with open(report_path, "w", encoding="utf-8", newline="\n") as report:
         with redirect_stdout(Tee(sys.stdout, report)):
+            print_header("BPE TOKENIZER TESTS")
             test_sanity()
             test_pattern()
             test_lossless(BPETokenizer(), "untrained tokenizer")
@@ -271,8 +277,9 @@ def main() -> None:
             test_save_load()
             if args.train:
                 test_sample_equivalence(args.train, args.ref_merges)
-            print("ALL TESTS PASSED")
-            print(f"test report saved to: {report_path}")
+            print_section("FINAL RESULT")
+            print_field("Test suite", "ALL TESTS PASSED")
+            print_field("Report saved to", report_path)
 
 
 if __name__ == "__main__":

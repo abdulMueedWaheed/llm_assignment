@@ -1,18 +1,23 @@
 """Byte-level BPE tokenizer for Urdu, implemented without tokenizer libraries."""
 
 import argparse
-from contextlib import redirect_stdout
 import heapq
 import json
 import sys
 import time
-from collections import Counter, defaultdict
+from collections import Counter
+from collections import defaultdict
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
 import regex
 
-from output_utils import Tee
+from output_utils import (
+    Tee,
+    print_field,
+    print_header,
+)
 
 SPECIAL = "<|endoftext|>"
 SPECIAL_ID = 256
@@ -52,7 +57,12 @@ def merge_ids(ids: list[int], pair: tuple[int, int], new_id: int) -> list[int]:
 class _HeapEntry:
     __slots__ = ("count", "byte_key", "pair")
 
-    def __init__(self, count: int, byte_key: tuple[bytes, bytes], pair: tuple[int, int]):
+    def __init__(
+        self,
+        count: int,
+        byte_key: tuple[bytes, bytes],
+        pair: tuple[int, int],
+    ):
         self.count = count
         self.byte_key = byte_key
         self.pair = pair
@@ -94,14 +104,20 @@ class BPETokenizer:
             if SPECIAL_ID in pair:
                 raise ValueError("the special token must never be merged")
             if left not in self.vocab or right not in self.vocab:
-                raise ValueError(f"merge {index + 1} uses a token ID that does not exist yet")
+                raise ValueError(
+                    f"merge {index + 1} uses a token ID that does not exist yet"
+                )
             self.vocab[new_id] = self.vocab[left] + self.vocab[right]
             self.inverse_vocab.setdefault(self.vocab[new_id], new_id)
             self.rank[pair] = new_id
         self.special_tokens = {SPECIAL: SPECIAL_ID}
         self.cache.clear()
 
-    def iter_pieces(self, path: str | Path, max_bytes: int | None = None) -> Iterable[str]:
+    def iter_pieces(
+        self,
+        path: str | Path,
+        max_bytes: int | None = None,
+    ) -> Iterable[str]:
         """Yield pre-tokens line by line; special-token text is excluded."""
         bytes_read = 0
         with open_text(path) as source:
@@ -113,7 +129,11 @@ class BPETokenizer:
                 if max_bytes is not None and bytes_read >= max_bytes:
                     break
 
-    def count_words(self, path: str | Path, max_bytes: int | None = None) -> Counter[str]:
+    def count_words(
+        self,
+        path: str | Path,
+        max_bytes: int | None = None,
+    ) -> Counter[str]:
         """Count distinct pre-tokens for the optimized trainer."""
         return Counter(self.iter_pieces(path, max_bytes))
 
@@ -167,11 +187,18 @@ class BPETokenizer:
             raise ValueError("heap_slack cannot be negative")
         if vocab_size > 65_536:
             raise ValueError("vocab_size must not exceed 65,536 for uint16 output")
-        if any(not isinstance(count, int) or count < 1 for count in word_counts.values()):
+        if any(
+            not isinstance(count, int) or count < 1
+            for count in word_counts.values()
+        ):
             raise ValueError("word frequencies must be positive integers")
 
         total_occurrences = sum(word_counts.values())
-        kept = [(word, count) for word, count in word_counts.items() if count >= min_freq]
+        kept = [
+            (word, count)
+            for word, count in word_counts.items()
+            if count >= min_freq
+        ]
         kept_occurrences = sum(count for _, count in kept)
         self.train_stats = {
             "distinct_total": len(word_counts),
@@ -240,8 +267,10 @@ class BPETokenizer:
 
             if log_every and (index + 1) % log_every == 0:
                 log(
-                    f"[ref] merge {index + 1}/{num_merges} {vocab[new_id]!r} "
-                    f"count={counts[best]} t={time.perf_counter() - started:.0f}s"
+                    f"[reference] {index + 1:>6,}/{num_merges:,} merges | "
+                    f"pair count: {counts[best]:,} | elapsed: "
+                    f"{time.perf_counter() - started:.0f}s | "
+                    f"merged bytes: {vocab[new_id]!r}"
                 )
         return merges
 
@@ -344,10 +373,11 @@ class BPETokenizer:
                 elapsed = time.perf_counter() - started
                 remaining = elapsed * (num_merges - index - 1) / (index + 1)
                 log(
-                    f"[fast] merge {index + 1}/{num_merges} {vocab[new_id]!r} "
-                    f"count={best_count} pairs={len(pair_counts):,} "
-                    f"heap={len(heap):,} t={elapsed:.0f}s "
-                    f"ETA={remaining / 3600:.2f}h"
+                    f"[fast]      {index + 1:>6,}/{num_merges:,} merges | "
+                    f"pair count: {best_count:,} | pairs: {len(pair_counts):,} | "
+                    f"heap: {len(heap):,} | elapsed: {elapsed:.0f}s | "
+                    f"ETA: {remaining / 3600:.2f}h | "
+                    f"merged bytes: {vocab[new_id]!r}"
                 )
             if checkpoint is not None:
                 checkpoint(merges)
@@ -367,7 +397,11 @@ class BPETokenizer:
             for pair in zip(word, word[1:]):
                 counts[pair] += frequencies[word_id]
                 locations[pair].add(word_id)
-        assert {pair: count for pair, count in pair_counts.items() if count} == dict(counts)
+        assert {
+            pair: count
+            for pair, count in pair_counts.items()
+            if count
+        } == dict(counts)
         assert {pair: ids for pair, ids in pair_words.items() if ids} == dict(locations)
 
     def _bpe_word(self, word_bytes: bytes) -> list[int]:
@@ -418,7 +452,11 @@ class BPETokenizer:
         except UnicodeDecodeError:
             return data.decode("utf-8", errors="replace")
 
-    def save(self, path: str | Path, merges: list[tuple[int, int]] | None = None) -> None:
+    def save(
+        self,
+        path: str | Path,
+        merges: list[tuple[int, int]] | None = None,
+    ) -> None:
         """Save learned merges and metadata as JSON."""
         saved_merges = self.merges if merges is None else merges
         payload = {
@@ -496,13 +534,15 @@ def _run_builtin_test(report_path: Path) -> None:
     if fast.decode(fast.encode(sample)) != sample:
         raise AssertionError("sample failed the encode/decode round trip")
 
-    print("BPE built-in test passed")
-    print(f"sample characters : {len(sample):,}")
-    print(f"pre-token count   : {len(pieces):,} ({len(counts):,} distinct)")
-    print(f"merges compared   : {len(fast.merges):,}")
-    print("reference == fast : yes")
-    print("round trip        : exact")
-    print(f"report saved to   : {report_path}")
+    print_header("BPE BUILT-IN TEST")
+    print_field("Result", "PASSED")
+    print_field("Sample characters", f"{len(sample):,}")
+    print_field("Pre-token count", f"{len(pieces):,}")
+    print_field("Distinct pre-tokens", f"{len(counts):,}")
+    print_field("Merges compared", f"{len(fast.merges):,}")
+    print_field("Reference == fast", "Yes")
+    print_field("Encode/decode", "Exact round trip")
+    print_field("Report saved to", report_path)
 
 
 def main() -> int:

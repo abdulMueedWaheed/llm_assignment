@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from bpe import BPETokenizer, FIRST_MERGE_ID
+from output_utils import print_header, print_section
 
 
 def peak_memory_mb() -> float | None:
@@ -44,12 +45,23 @@ def main() -> int:
     )
     parser.add_argument("--vocab-size", type=int, default=50_000)
     parser.add_argument("--mode", choices=("fast", "reference"), default="fast")
-    parser.add_argument("--min-freq", type=int, default=1,
-                        help="drop less frequent pre-tokens (1 preserves all training data)")
-    parser.add_argument("--max-bytes", type=int,
-                        help="read only the first N bytes, for trial runs")
-    parser.add_argument("--checkpoint-every", type=int, default=5_000,
-                        help="write a partial tokenizer every N merges; 0 disables it")
+    parser.add_argument(
+        "--min-freq",
+        type=int,
+        default=1,
+        help="drop less frequent pre-tokens (1 preserves all training data)",
+    )
+    parser.add_argument(
+        "--max-bytes",
+        type=int,
+        help="read only the first N bytes, for trial runs",
+    )
+    parser.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=5_000,
+        help="write a partial tokenizer every N merges; 0 disables it",
+    )
     args = parser.parse_args()
     if not Path(args.train).is_file():
         parser.error(f"training text file does not exist: {args.train}")
@@ -81,7 +93,14 @@ def main() -> int:
 
     try:
         started = time.perf_counter()
-        log(f"Reading pre-tokens from {args.train!r} ...")
+        print_header("URDU BPE TOKENIZER TRAINING")
+        print_section("INPUTS AND SETTINGS")
+        log(f"Training data           : {Path(args.train).resolve()}")
+        log(f"Tokenizer output        : {output_path.resolve()}")
+        log(f"Training mode           : {args.mode}")
+        log(f"Vocabulary size         : {args.vocab_size:,}")
+        log(f"Minimum word frequency : {args.min_freq}")
+        log("Reading and counting pre-tokens ...")
         if args.mode == "reference":
             if args.min_freq != 1:
                 parser.error("--min-freq is only supported by the fast trainer")
@@ -95,18 +114,21 @@ def main() -> int:
             occurrences = sum(counts.values())
             distinct = len(counts)
         counted_at = time.perf_counter()
-        log(
-            f"distinct pre-tokens: {distinct if distinct is not None else 'not aggregated'}; "
-            f"occurrences: {occurrences:,}; "
-            f"read/count time: {counted_at - started:.0f}s"
+        print_section("CORPUS COUNTS")
+        distinct_text = (
+            f"{distinct:,}" if distinct is not None else "not aggregated"
         )
+        log(f"Distinct pre-tokens      : {distinct_text}")
+        log(f"Pre-token occurrences   : {occurrences:,}")
+        log(f"Read/count time          : {counted_at - started:.0f}s")
         if counts is not None:
             singleton_count = sum(frequency == 1 for frequency in counts.values())
             log(
-                f"singletons: {singleton_count:,} "
-                f"({100.0 * singleton_count / max(len(counts), 1):.1f}% of distinct)"
+                f"Singleton pre-tokens    : {singleton_count:,} "
+                f"({100.0 * singleton_count / max(len(counts), 1):.1f}%)"
             )
-        log(f"Training {args.mode} reference/fast BPE ...")
+        print_section("TRAINING")
+        log(f"Running the {args.mode} BPE trainer ...")
         if args.mode == "reference":
             tokenizer.train_reference(
                 pieces,
@@ -130,32 +152,45 @@ def main() -> int:
             len(tokenizer.merges) == expected_merges
             and len(tokenizer.vocab) == args.vocab_size
         )
-        log("\n=== TRAINING REPORT ===")
-        log(f"merges learned     : {len(tokenizer.merges):,} (expected {expected_merges:,})")
-        log(f"vocabulary size    : {len(tokenizer.vocab):,}")
+        print_section("TRAINING REPORT")
+        log(
+            f"Merges learned           : {len(tokenizer.merges):,} "
+            f"(expected {expected_merges:,})"
+        )
+        log(f"Vocabulary size          : {len(tokenizer.vocab):,}")
         stats = tokenizer.train_stats
         log(
-            f"pre-tokens kept    : {stats['distinct_used']:,}/{stats['distinct_total']:,} "
-            f"distinct; {100.0 * stats['occurrences_used'] / max(stats['occurrences_total'], 1):.3f}% "
-            "of occurrences"
+            f"Distinct pre-tokens kept : {stats['distinct_used']:,}/"
+            f"{stats['distinct_total']:,}"
         )
-        log(f"min_freq           : {args.min_freq}")
-        log(f"counting time      : {counted_at - started:.0f}s")
-        log(f"training time      : {finished - counted_at:.0f}s")
-        log(f"total wall-clock   : {(finished - started) / 3600:.2f}h")
+        retained_percent = (
+            100.0
+            * stats["occurrences_used"]
+            / max(stats["occurrences_total"], 1)
+        )
+        log(f"Occurrences retained    : {retained_percent:.3f}%")
+        log(f"Minimum frequency       : {args.min_freq}")
+        log(f"Counting duration       : {counted_at - started:.0f}s")
+        log(f"Training duration       : {finished - counted_at:.0f}s")
+        log(f"Total duration          : {(finished - started) / 3600:.2f}h")
         memory = peak_memory_mb()
-        log(f"peak memory        : {memory:.0f} MB" if memory is not None
-            else "peak memory        : check Task Manager / Resource Monitor")
-        log(f"machine            : {platform.platform()}")
-        log(f"processor           : {platform.processor()}")
-        log(f"CPU cores           : {os.cpu_count()}")
-        log(f"Python              : {platform.python_version()}")
-        log(f"saved to            : {output_path}")
+        memory_text = (
+            f"{memory:.0f} MB"
+            if memory is not None
+            else "check Task Manager / Resource Monitor"
+        )
+        log(f"Peak memory             : {memory_text}")
+        log(f"Operating system        : {platform.platform()}")
+        log(f"Processor               : {platform.processor()}")
+        log(f"CPU cores               : {os.cpu_count()}")
+        log(f"Python version          : {platform.python_version()}")
+        log(f"Tokenizer saved to      : {output_path.resolve()}")
         if os.path.exists(partial_path):
             os.remove(partial_path)
         if not complete:
             log(
-                "ERROR: training stopped before reaching the requested vocabulary size. "
+                "ERROR: training stopped before reaching the requested "
+                "vocabulary size. "
                 "The tokenizer was saved, but the corpus or training filters did not "
                 "provide enough mergeable pairs."
             )
